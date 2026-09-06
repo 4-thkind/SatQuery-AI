@@ -1,2 +1,2 @@
 # SatQuery-AI
-An Interactive Vision-Language Assistant for Multimodal Remote Sensing Image Analysis through Text Queries
+An Interactive Vision-Language Assistant for MultiModal Remote Sensing Image Analysis through Text Queries
