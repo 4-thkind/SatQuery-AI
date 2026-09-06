@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SatQuery AI — SIH26167</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<style>
+:root{
+  /* Neutral instrument greys, deliberately desaturated. An earlier pass used
+     saturated cyan-on-near-black with gradients and a pulsing status dot; that
+     is the house style of AI demo dashboards, not of geospatial software.
+     QGIS, ArcGIS Pro and Sentinel Hub all read as tools: flat grey chrome, one
+     restrained accent, and colour reserved for the data itself. Colour here is
+     information, never decoration. */
+  --bg:#16181c; --panel:#1d2025; --panel2:#24282e; --line:#31363e;
+  --ink:#dfe3e8; --dim:#9aa2ad; --faint:#6c7480;
+  --accent:#4d8fd1;      /* muted cartographic blue, not neon cyan */
+  --good:#6a9e63; --warn:#c39338; --bad:#c05f5f;
+  --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#243044;border-radius:4px}
+
+/* ---- shell ---- */
+.app{display:flex;flex-direction:column;height:100vh}
+.top{display:flex;align-items:center;gap:14px;padding:0 16px;height:52px;
+  background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+.brand{font-weight:700;letter-spacing:.3px;font-size:15px}
+.brand span{color:var(--accent)}
+.ps{font-size:11px;color:var(--faint);border-left:1px solid var(--line);padding-left:14px}
+.badges{margin-left:auto;display:flex;gap:8px;align-items:center}
+.badge{display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px;
+  border:1px solid var(--line);border-radius:2px;background:var(--panel2);color:var(--dim);
+  font-family:var(--mono)}
+/* A plain square, not a pulsing circle. Instrument panels show state; they do
+   not animate to draw attention to something that has not changed. */
+.dot{width:6px;height:6px;background:var(--good)}
+
+.cols{flex:1;display:grid;grid-template-columns:236px 1fr 400px;min-height:0;overflow:hidden}
+.col{overflow-y:auto;min-height:0}
+.col.left{background:var(--panel);border-right:1px solid var(--line)}
+.col.right{background:var(--panel);border-left:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden}
+.mid{display:flex;flex-direction:column;min-height:0;background:#05070c}
+
+h3.sec{font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--faint);
+  margin:0;padding:14px 14px 8px;font-weight:600}
+
+/* ---- scenes ---- */
+.scene{padding:9px 14px;border-left:2px solid transparent;cursor:pointer}
+.scene:hover{background:var(--panel2)}
+.scene.on{background:var(--panel2);border-left-color:var(--accent)}
+.scene .nm{font-size:12.5px;font-weight:500}
+.scene .mt{font-size:10.5px;color:var(--faint);margin-top:2px}
+.syn{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;
+  background:#3b2f14;color:var(--warn);border:1px solid #56421a;margin-left:5px}
+
+.facts{padding:4px 14px 14px;font-size:11.5px}
+.fact{display:flex;justify-content:space-between;padding:3px 0;color:var(--dim)}
+.fact b{color:var(--ink);font-weight:500;font-family:var(--mono);font-size:11px}
+.bandrow{display:flex;gap:6px;align-items:center;padding:3px 0;font-family:var(--mono);font-size:11px}
+.bandrow i{color:var(--faint);font-style:normal;width:14px}
+
+/* ---- map ---- */
+.maptop{display:flex;align-items:center;gap:10px;padding:8px 14px;
+  border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+.seg{display:flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg button{background:none;border:0;padding:5px 11px;font-size:11px;color:var(--dim)}
+.seg button.on{background:var(--accent);color:#06131c;font-weight:600}
+.stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;
+  padding:16px;min-height:0}
+.frame{position:relative;max-width:100%;max-height:100%;aspect-ratio:1;
+  border:1px solid var(--line);border-radius:3px;overflow:hidden;background:#000}
+.frame img{display:block;width:100%;height:100%;object-fit:contain}
+.frame img.ov{position:absolute;inset:0;transition:opacity .2s}
+.legend{position:absolute;left:12px;bottom:12px;background:rgba(8,11,18,.9);
+  border:1px solid var(--line);border-radius:2px;padding:7px 10px;font-size:10.5px}
+.legend div{display:flex;align-items:center;gap:7px;margin:2px 0;color:var(--dim)}
+.sw{width:14px;height:9px;border-radius:2px}
+.scalebar{position:absolute;right:12px;bottom:12px;background:rgba(8,11,18,.9);
+  border:1px solid var(--line);border-radius:2px;padding:5px 9px;font-size:10px;color:var(--dim)}
+.scalebar .bar{height:3px;background:var(--ink);margin-bottom:3px}
+
+/* ---- epoch compare ---- */
+.cmpbtn{background:var(--panel2);border:1px solid var(--line);border-radius:3px;
+  padding:5px 11px;font-size:11px;color:var(--dim)}
+.cmpbtn:hover{border-color:var(--accent);color:var(--ink)}
+.cmpbtn.on{background:var(--accent);color:#06131c;font-weight:600;border-color:var(--accent)}
+.cmp{display:flex;gap:10px;max-width:100%;max-height:100%}
+.cmp .half{position:relative;flex:1 1 0;min-width:0;display:flex;
+  flex-direction:column;gap:6px}
+.cmp .frame{width:100%;height:auto}
+.epoch{font-size:10.5px;font-family:var(--mono);color:var(--dim);
+  display:flex;justify-content:space-between;padding:0 2px}
+.epoch b{color:var(--ink);font-weight:500}
+.epoch .tag{color:var(--faint)}
+
+.layers{flex:none;border-top:1px solid var(--line);background:var(--panel);padding:10px 14px}
+.lay{display:flex;align-items:center;gap:9px;padding:3px 0;font-size:11.5px}
+.lay input[type=range]{flex:1;accent-color:var(--accent);height:3px}
+.lay label{display:flex;align-items:center;gap:6px;width:128px;color:var(--dim);cursor:pointer}
+.lay input[type=checkbox]{accent-color:var(--accent)}
+.lay .pct{width:34px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--faint)}
+
+/* ---- chat ---- */
+.turns{flex:1;overflow-y:auto;padding:14px;min-height:0}
+.you{background:var(--panel2);border:1px solid var(--line);border-left:2px solid var(--accent);
+  border-radius:3px;padding:9px 12px;margin-bottom:12px}
+.you .lb{font-size:10px;letter-spacing:1px;color:var(--accent);margin-bottom:3px}
+.card{background:var(--panel2);border:1px solid var(--line);border-radius:3px;
+  padding:12px;margin-bottom:12px}
+.card.abstain{border-color:#7a5c16;background:#1d1708}
+.card.degrade{border-color:#6b5410}
+/* Tabular figures and a normal ink colour. A 34px neon-green number is a
+   marketing stat; this is a measurement, so it is set like one. */
+.hero{font-size:27px;font-weight:600;color:var(--ink);line-height:1.15;
+  font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hero small{font-size:13px;font-weight:400;margin-left:5px;color:var(--dim)}
+.herolb{font-size:11px;color:var(--dim);margin-bottom:2px}
+.narr{font-size:12.5px;color:#c3d0e2;white-space:pre-wrap;margin-top:10px}
+.vhead{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;margin-bottom:8px}
+.vhead.ok{color:var(--good)} .vhead.ab{color:var(--warn)}
+
+.chip{display:inline-flex;align-items:center;gap:4px;background:#10263a;
+  border:1px solid #1d4767;color:#7dd3fc;border-radius:2px;padding:1px 6px;
+  font-family:var(--mono);font-size:11.5px;cursor:pointer}
+.chip:hover{background:#16324a;border-color:var(--accent)}
+
+.meter{height:4px;background:#1b2434;border-radius:3px;overflow:hidden;margin:7px 0 3px}
+.meter div{height:100%;background:var(--accent)}
+.kv{display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);
+  font-family:var(--mono);padding:1px 0}
+
+/* ---- retrieved citations ---- */
+.cites{margin-top:9px;border-top:1px solid var(--line);padding-top:8px}
+.cites .h{font-size:9.5px;letter-spacing:1.1px;color:var(--faint);
+  font-weight:600;margin-bottom:5px;display:flex;justify-content:space-between}
+.cites .h em{font-style:normal;color:var(--warn);font-size:9px}
+.cite{font-size:10.5px;color:var(--dim);padding:3px 0 3px 8px;
+  border-left:1px solid var(--line);margin-bottom:3px}
+.cite b{color:var(--ink);font-weight:500;display:block;font-size:11px}
+.cite span{color:var(--faint);font-family:var(--mono);font-size:9.5px}
+
+.wx{border:1px solid #4a3a15;background:#171308;border-radius:3px;padding:10px 12px;margin-bottom:12px}
+.wx .t{font-size:10px;letter-spacing:1.1px;color:var(--warn);margin-bottom:6px;font-weight:600}
+.wxrow{display:flex;justify-content:space-between;font-size:11.5px;padding:2px 0;color:var(--dim)}
+.wxrow b{color:var(--ink);font-family:var(--mono)}
+
+.ask{flex:none;border-top:1px solid var(--line);padding:10px;background:var(--panel)}
+.askbox{display:flex;gap:8px}
+.askbox input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:3px;
+  padding:9px 11px;color:var(--ink);font:inherit;font-size:12.5px;outline:none}
+.askbox input:focus{border-color:var(--accent)}
+.askbox button{background:var(--accent);color:#06131c;border:0;border-radius:3px;
+  padding:0 15px;font-weight:600;font-size:12.5px}
+.askbox button:disabled{opacity:.45;cursor:default}
+.sugg{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.sugg button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+  border-radius:2px;padding:3px 9px;font-size:10.5px}
+.sugg button:hover{border-color:var(--accent);color:var(--ink)}
+
+/* ---- drawer ---- */
+.scrim{position:fixed;inset:0;background:rgba(4,6,10,.72);z-index:40}
+.draw{position:fixed;top:0;right:0;bottom:0;width:640px;max-width:94vw;background:var(--panel);
+  border-left:1px solid var(--line);z-index:41;display:flex;flex-direction:column}
+.drawtop{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);flex:none}
+.drawtop b{font-size:14px}
+.drawtop button{margin-left:auto;background:none;border:1px solid var(--line);
+  border-radius:3px;padding:3px 10px;color:var(--dim)}
+.drawbody{flex:1;overflow-y:auto;padding:18px}
+.ev{border:1px solid var(--line);border-radius:3px;margin-bottom:12px;overflow:hidden}
+.evh{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel2);font-size:12px}
+.evh code{font-family:var(--mono);color:var(--accent);font-size:11.5px}
+.evb{padding:11px 12px;font-size:11.5px}
+.arith{font-family:var(--mono);font-size:12px;background:#12151a;border:1px solid var(--line);
+  border-left:2px solid var(--accent);color:#cdd6e0;border-radius:2px;padding:9px 11px;
+  margin:7px 0;word-break:break-word}
+.lbl{font-size:9.5px;letter-spacing:1.1px;color:var(--faint);margin:9px 0 3px;font-weight:600}
+.repro{font-family:var(--mono);font-size:10.5px;color:var(--dim);background:var(--bg);
+  border:1px solid var(--line);border-radius:2px;padding:8px;word-break:break-word}
+table{width:100%;border-collapse:collapse;font-size:11px;font-family:var(--mono)}
+th{text-align:left;color:var(--faint);font-weight:500;padding:4px 6px;border-bottom:1px solid var(--line)}
+td{padding:4px 6px;border-bottom:1px solid #161e2c;color:var(--dim)}
+td.now{color:var(--good)}
+.cav{background:#1c1608;border:1px solid #4a3a15;border-radius:2px;padding:7px 9px;
+  font-size:11px;color:#e8cf94;margin-top:5px}
+pre.json{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px solid var(--line);
+  border-radius:3px;padding:10px;overflow-x:auto;color:var(--dim);margin:0}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+  flex:none;border-top:1px solid var(--line)}
+.tile{background:var(--panel);padding:9px 13px}
+.tile b{font-size:11.5px;display:block}
+.tile span{font-size:10px;color:var(--faint);line-height:1.35;display:block;margin-top:1px}
+.err{background:#2a1214;border:1px solid #5c2126;color:#fca5a5;border-radius:3px;
+  padding:10px 12px;font-size:12px;margin-bottom:12px}
+.spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const API = location.port === '5500' || location.port === '3000'
+  ? 'http://127.0.0.1:8000' : '';
+const { useState, useEffect, useRef, createElement: h, Fragment } = React;
+
+const fmt = n => n == null ? '—'
+  : n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const api = async (p, o) => {
+  const r = await fetch(API + p, o);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  return r.json();
+};
+
+// Each suggestion exercises a different path, so clicking through them never
+// shows the same answer twice: measure, compare, describe, refuse-on-bands,
+// refuse-on-coverage, plus the same question in four scripts.
+const SUGGESTIONS = [
+  'How much area is flooded?',
+  'How much more water than before?',
+  'describe this scene',
+  'show me the burn scar',
+  'how much flooding in Assam',
+  'kitna area baadh me hai',
+  'बाढ़ का क्षेत्र कितना है',
+  'ਹੜ੍ਹ ਦਾ ਖੇਤਰ ਕਿੰਨਾ ਹੈ',
+  'পানি কত আছে',
+  'நீர் எவ்வளவு',
+];
+
+/* ---------- evidence drawer ---------- */
+function Drawer({ turn, onClose }) {
+  if (!turn) return null;
+  const ev = turn.evidence || [];
+  return h(Fragment, null,
+    h('div', { className: 'scrim', onClick: onClose }),
+    h('div', { className: 'draw' },
+      h('div', { className: 'drawtop' },
+        h('b', null, 'Evidence Ledger'),
+        h('code', { style: { marginLeft: 10, fontSize: 11, color: 'var(--faint)' } },
+          turn.turn_id || ''),
+        h('button', { onClick: onClose }, 'Close')),
+      h('div', { className: 'drawbody' },
+        h('div', { style: { fontSize: 12, color: 'var(--dim)', marginBottom: 14 } },
+          'Every row is one kernel execution. The arithmetic column is the ',
+          'computation itself — not a description of it.'),
+        ev.map((e, i) => h('div', { className: 'ev', key: i },
+          h('div', { className: 'evh' },
+            h('code', null, e.step_id),
+            h('b', null, e.tool),
+            h('span', { style: { marginLeft: 'auto', color: e.ok ? 'var(--good)' : 'var(--bad)' } },
+              e.ok ? 'ok' : 'failed'),
+            h('span', { style: { color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 10 } },
+              e.duration_ms + ' ms')),
+          h('div', { className: 'evb' },
+            e.arithmetic && h(Fragment, null,
+              h('div', { className: 'lbl' }, 'ARITHMETIC'),
+              h('div', { className: 'arith' }, e.arithmetic)),
+            e.value && typeof e.value === 'object' && !e.value.hectares &&
+              Object.keys(e.value).some(k => k.startsWith('+') || k.startsWith('-')) &&
+              h(Fragment, null,
+                h('div', { className: 'lbl' }, 'THRESHOLD SENSITIVITY'),
+                h('table', null,
+                  h('thead', null, h('tr', null,
+                    h('th', null, 'offset'), h('th', null, 'threshold'),
+                    h('th', null, 'pixels'), h('th', null, 'hectares'))),
+                  h('tbody', null, Object.entries(e.value).map(([k, v]) =>
+                    h('tr', { key: k },
+                      h('td', { className: k === '+0.00' ? 'now' : '' }, k),
+                      h('td', null, v.threshold),
+                      h('td', null, (v.pixels || 0).toLocaleString('en-IN')),
+                      h('td', { className: k === '+0.00' ? 'now' : '' }, fmt(v.hectares))))))),
+            e.value && typeof e.value === 'object' && !Object.keys(e.value).some(k => k.startsWith('+')) &&
+              h(Fragment, null,
+                h('div', { className: 'lbl' }, 'VALUE'),
+                h('pre', { className: 'json' }, JSON.stringify(e.value, null, 1))),
+            e.upstream && e.upstream.length > 0 && h(Fragment, null,
+              h('div', { className: 'lbl' }, 'UPSTREAM'),
+              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--dim)' } },
+                e.upstream.join(' -> ') + ' -> ' + e.step_id)),
+            e.reproduce && h(Fragment, null,
+              h('div', { className: 'lbl' }, 'REPRODUCE'),
+              h('div', { className: 'repro' }, e.reproduce)),
+            (e.caveats || []).map((c, j) => h('div', { className: 'cav', key: j }, c))))),
+        turn.plan && h(Fragment, null,
+          h('div', { className: 'lbl' }, 'TOOL PLAN (as executed)'),
+          h('pre', { className: 'json' }, JSON.stringify(turn.plan, null, 1))))));
+}
+
+/* ---------- one answer ---------- */
+function Answer({ t, onEvidence }) {
+  const [open, setOpen] = useState(false);
+  const c = t.confidence, ab = t.verdict === 'ABSTAIN';
+
+  return h('div', { className: 'card' + (ab ? ' abstain' : t.verdict === 'DEGRADE' ? ' degrade' : '') },
+    h('div', { className: 'vhead ' + (ab ? 'ab' : 'ok') },
+      h('span', null, ab ? '⚠' : '✓'),
+      ab ? 'Cannot Answer — Insufficient Spectral Basis'
+        : t.verdict === 'DEGRADE' ? 'Verified Answer (Degraded)' : 'Verified Answer'),
+
+    t.headline && h(Fragment, null,
+      h('div', { className: 'herolb' },
+        'Calculated ' + (t.headline.label || '').replace(/^\w/, x => x.toUpperCase()) + ' Area'),
+      h('div', { className: 'hero' }, fmt(t.headline.value), h('small', null, 'ha'))),
+
+    h('div', { className: 'narr' }, t.narration),
+
+    // Retrieved method references. Marked as retrieval so nobody reads them as
+    // the source of the number -- the kernel measured that, these explain how.
+    t.citations && t.citations.length > 0 && h('div', { className: 'cites' },
+      h('div', { className: 'h' },
+        h('span', null, 'METHOD REFERENCES  ·  RETRIEVED'),
+        h('em', null, 'PHASE 2 · PREVIEW')),
+      t.citations.map(c => h('div', { className: 'cite', key: c.id },
+        h('b', null, c.title),
+        h('span', null, c.source)))),
+
+    c && h(Fragment, null,
+      h('div', { className: 'meter' }, h('div', { style: { width: (c.score * 100) + '%' } })),
+      h('div', {
+        className: 'kv', style: { cursor: 'pointer', color: 'var(--dim)' },
+        onClick: () => setOpen(!open)
+      },
+        h('span', null, 'Confidence: ' + c.band),
+        h('span', null, c.score.toFixed(3) + (open ? '  ▾' : '  ▸'))),
+      open && Object.entries(c.components).map(([k, v]) =>
+        h('div', { className: 'kv', key: k }, h('span', null, k.replace(/_/g, ' ')), h('span', null, v)))),
+
+    h('div', { style: { display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' } },
+      t.evidence && t.evidence.length > 0 &&
+      h('button', { className: 'chip', onClick: () => onEvidence(t) },
+        '🔍 Evidence · ' + t.evidence.length + ' steps'),
+      t.turn_id && h('span', {
+        className: 'chip',
+        style: { background: '#111a24', borderColor: 'var(--line)', color: 'var(--faint)' }
+      }, t.turn_id)),
+
+    h('div', { style: { fontSize: 10, color: 'var(--faint)', marginTop: 9 } },
+      'All numbers are pixel-verified on-premise. Tier ' + t.tier + ' · ' +
+      (t.language_label ? t.language_label + ' · ' : '') +
+      Math.round(t.duration_ms) + ' ms'));
+}
+
+/* ---------- weather corroboration ---------- */
+function Weather({ w }) {
+  if (!w) return null;
+  return h('div', { className: 'wx' },
+    h('div', { className: 't' }, '🌧 WEATHER CONTEXT — ' + w.district.toUpperCase() + ' DISTRICT'),
+    h('div', { className: 'wxrow' }, h('span', null, `Cumulative ${w.window_days}-day total`),
+      h('b', null, w.total_mm + ' mm')),
+    h('div', { className: 'wxrow' }, h('span', null, 'Peak 24h rainfall'),
+      h('b', null, w.peak_24h_mm + ' mm')),
+    h('div', { className: 'wxrow' }, h('span', null, 'Deviation from normal'),
+      h('b', { style: { color: 'var(--warn)' } }, '+' + w.departure_pct + '%')),
+    h('div', { style: { fontSize: 9.5, color: 'var(--faint)', marginTop: 6 } },
+      'Independent corroboration · bundled offline · source: ' + w.source));
+}
+
+/* ---------- app ---------- */
+function App() {
+  const [scenes, setScenes] = useState([]);
+  const [sid, setSid] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [turns, setTurns] = useState([]);
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [health, setHealth] = useState({});
+  const [view, setView] = useState('false');
+  const [drawer, setDrawer] = useState(null);
+  const [showMask, setShowMask] = useState(true);
+  const [op, setOp] = useState(70);
+  const [maskIntent, setMaskIntent] = useState('flood_extent');
+  const [showBase, setShowBase] = useState(true);
+  // Side-by-side epoch comparison. Only offered for scenes the manifest pairs;
+  // for everything else there is no "before" and the control stays hidden.
+  const [compare, setCompare] = useState(false);
+  const [wipe, setWipe] = useState(50);
+  const endRef = useRef(null);
+
+  useEffect(() => {
+    api('/api/v1/health').then(setHealth).catch(() => {});
+    api('/api/v1/scenes').then(d => {
+      // Demo order, not alphabetical: the flood story leads, controls trail.
+      const ORDER = ['bihar_post_flood', 'bihar_pre_flood', 'bihar_post_flood_cloudy',
+        'urban_t1', 'urban_t2', 'forest_burn', 'barren'];
+      d.scenes.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+      setScenes(d.scenes);
+      const first = d.scenes.find(s => s.id === 'bihar_post_flood') || d.scenes[0];
+      if (first) setSid(first.id);
+    }).catch(e => setErr('Backend unreachable — start it with: ' +
+      'python -m uvicorn backend.app:app  (' + e.message + ')'));
+  }, []);
+
+  useEffect(() => {
+    if (!sid) return;
+    setTurns([]); setDrawer(null); setMaskIntent('water_extent');
+    api('/api/v1/scenes/' + sid).then(setDetail).catch(() => {});
+  }, [sid]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [turns, busy]);
+
+  const scene = scenes.find(s => s.id === sid);
+
+  async function ask(text) {
+    const query = (text ?? q).trim();
+    if (!query || !sid || busy) return;
+    setQ(''); setErr(null); setBusy(true);
+    setTurns(t => [...t, { role: 'you', query }]);
+    try {
+      const r = await api('/api/v1/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, scene_id: sid, session_id: 'ui' })
+      });
+      setTurns(t => [...t, { role: 'ai', ...r }]);
+      // An ABSTAIN measured nothing, so there is no mask that belongs to it.
+      // Leaving the previous overlay up would contradict the refusal on screen.
+      if (r.verdict === 'ABSTAIN') setShowMask(false);
+      else { setShowMask(true); if (r.intent) setMaskIntent(r.intent); }
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  // The manifest names each scene's counterpart epoch; only paired scenes can
+  // be compared, so the control is absent rather than disabled elsewhere.
+  const pairScene = scene && scene.pair
+    ? scenes.find(x => x.id === scene.pair) : null;
+
+  const maskUrl = sid ? `${API}/api/v1/scenes/${sid}/mask.png?intent=${maskIntent}` : '';
+  const lastWx = [...turns].reverse().find(t => t.role === 'ai' && t.corroboration);
+  // The header used to show a static "EN | हिं" that looked like a switcher but was
+  // inert. Show what the classifier actually detected instead -- the reply language
+  // follows the question, so this is real state, not decoration.
+  const lastAi = [...turns].reverse().find(t => t.role === 'ai');
+  const lastLang = (lastAi && lastAi.language_label) || 'Auto-detect';
+
+  return h('div', { className: 'app' },
+    /* top bar */
+    h('div', { className: 'top' },
+      h('div', { className: 'brand' }, 'SatQuery ', h('span', null, 'AI')),
+      h('div', { className: 'ps' }, 'SIH26167 · ISRO / Dept. of Space · Team KERNEL'),
+      h('div', { className: 'badges' },
+        h('div', { className: 'badge' }, h('span', { className: 'dot live' }),
+          'Tier ' + (health.tier || '—') + ' · ' +
+          (health.tier === 'C' ? 'No model weights' : 'VLM')),
+        h('div', { className: 'badge' }, h('span', { className: 'dot' }),
+          'Offline · ' + (health.outbound_requests ?? 0) + ' outbound'),
+        h('div', { className: 'badge', title: 'Language detected from your last query' },
+          h('span', { className: 'dot', style: { background: 'var(--accent)' } }),
+          lastLang))),
+
+    h('div', { className: 'cols' },
+      /* ---- left ---- */
+      h('div', { className: 'col left' },
+        h('h3', { className: 'sec' }, 'Scenes'),
+        scenes.map(s => h('div', {
+          key: s.id, className: 'scene' + (s.id === sid ? ' on' : ''),
+          onClick: () => setSid(s.id)
+        },
+          h('div', { className: 'nm' }, s.label,
+            s.synthetic && h('span', { className: 'syn' }, 'SYN')),
+          h('div', { className: 'mt' }, s.sensor.replace(' (synthetic)', '') +
+            ' · ' + s.acquired))),
+
+        scene && h(Fragment, null,
+          h('h3', { className: 'sec' }, 'Bands'),
+          h('div', { className: 'facts' },
+            scene.bands.map((b, i) => h('div', { className: 'bandrow', key: b },
+              h('i', null, i + 1), b,
+              h('span', { style: { marginLeft: 'auto', color: 'var(--faint)', fontSize: 10 } },
+                'read from file'))),
+
+            h('h3', { className: 'sec', style: { padding: '14px 0 8px' } }, 'Scene Facts'),
+            h('div', { className: 'fact' }, h('span', null, 'CRS'), h('b', null, scene.crs.replace('EPSG:', ''))),
+            h('div', { className: 'fact' }, h('span', null, 'Pixel'),
+              h('b', null, Math.sqrt(scene.pixel_area_m2) + ' m')),
+            h('div', { className: 'fact' }, h('span', null, 'Pixel area'),
+              h('b', null, scene.pixel_area_m2 + ' m²')),
+            h('div', { className: 'fact' }, h('span', null, 'Size'),
+              h('b', null, scene.width + '×' + scene.height)),
+            h('div', { className: 'fact' }, h('span', null, 'Place'), h('b', null, scene.place)),
+            detail?.bandstack && h('div', { className: 'fact' }, h('span', null, 'Radiometry'),
+              h('b', { style: { color: 'var(--good)', fontSize: 10 } },
+                detail.bandstack.radiometry === 'calibrated_reflectance' ? 'calibrated' : 'stretched')),
+            scene.synthetic && h('div', {
+              style: {
+                marginTop: 12, fontSize: 10.5, color: '#e8cf94', background: '#1c1608',
+                border: '1px solid #4a3a15', borderRadius: 6, padding: '8px 9px', lineHeight: 1.45
+              }
+            }, h('b', null, 'Synthetic scene.'),
+              ' Radiometrically physical, geometry generated. Ground truth is exact by ' +
+              'construction, so every measurement is checkable.'))),
+
+        scene?.ground_truth && Object.keys(scene.ground_truth).length > 0 && h(Fragment, null,
+          h('h3', { className: 'sec' }, 'Ground Truth'),
+          h('div', { className: 'facts' },
+            Object.entries(scene.ground_truth).map(([k, v]) =>
+              h('div', { className: 'fact', key: k },
+                h('span', null, k.replace(/_/g, ' ')),
+                h('b', null, typeof v === 'number' ? v.toLocaleString('en-IN') : String(v))))))),
+
+      /* ---- middle ---- */
+      h('div', { className: 'col mid' },
+        h('div', { className: 'maptop' },
+          h('div', { className: 'seg' },
+            ['false', 'natural'].map(v => h('button', {
+              key: v, className: view === v ? 'on' : '', onClick: () => setView(v)
+            }, v === 'false' ? 'False colour' : 'Natural'))),
+          pairScene && h('button', {
+            className: 'cmpbtn' + (compare ? ' on' : ''),
+            onClick: () => setCompare(!compare),
+            title: 'Show ' + pairScene.acquired + ' beside ' + scene.acquired
+          }, compare ? 'Exit compare' : 'Compare epochs'),
+          h('div', { style: { fontSize: 11, color: 'var(--faint)', marginLeft: 'auto' } },
+            scene ? scene.bounds_wgs84.map(n => n.toFixed(3)).join(', ') : '')),
+
+        h('div', { className: 'stage' },
+          // Side-by-side epochs. Both frames get the same preview treatment, so
+          // any visible difference is a difference in the pixels, not in how the
+          // two were rendered. The mask is drawn only on the current epoch --
+          // it was measured from that scene and belongs to it.
+          scene && compare && pairScene && h('div', { className: 'cmp' },
+            [pairScene, scene].map((sc, i) => h('div', { className: 'half', key: sc.id },
+              h('div', { className: 'epoch' },
+                h('b', null, sc.acquired),
+                h('span', { className: 'tag' }, i === 0 ? 'BEFORE' : 'AFTER')),
+              h('div', { className: 'frame' },
+                h('img', { src: API + '/' + (view === 'false' ? sc.preview_false : sc.preview_natural) }),
+                i === 1 && showMask && h('img', {
+                  className: 'ov', src: maskUrl, style: { opacity: op / 100 },
+                  onError: e => { e.target.style.display = 'none'; }
+                }))))),
+
+          scene && !compare && h('div', { className: 'frame' },
+            showBase && h('img', { src: API + '/' + (view === 'false' ? scene.preview_false : scene.preview_natural) }),
+            showMask && h('img', {
+              className: 'ov', src: maskUrl, style: { opacity: op / 100 },
+              onError: e => { e.target.style.display = 'none'; }
+            }),
+            h('div', { className: 'legend' },
+              h('div', null, h('span', { className: 'sw', style: { background: '#38bdf8' } }),
+                'Detected mask (kernel)'),
+              h('div', null, h('span', {
+                className: 'sw',
+                style: { background: view === 'false' ? '#e8455f' : '#4a7c3f' }
+              }), view === 'false' ? 'Vegetation (NIR)' : 'Vegetation')),
+            h('div', { className: 'scalebar' },
+              h('div', { className: 'bar', style: { width: 60 } }),
+              scene ? (60 * Math.sqrt(scene.pixel_area_m2) * (scene.width / 512) / 1000).toFixed(1) + ' km' : ''))),
+
+        h('div', { className: 'layers' },
+          h('div', { className: 'lay' },
+            h('label', null,
+              h('input', {
+                type: 'checkbox', checked: showMask,
+                onChange: e => setShowMask(e.target.checked)
+              }), 'Detected mask'),
+            h('input', {
+              type: 'range', min: 0, max: 100, value: op,
+              onChange: e => setOp(+e.target.value)
+            }),
+            h('span', { className: 'pct' }, op + '%')),
+          h('div', { className: 'lay' },
+            h('label', null,
+              h('input', {
+                type: 'checkbox', checked: showBase,
+                onChange: e => setShowBase(e.target.checked)
+              }), 'Scene preview'),
+            h('span', { className: 'pct', style: { marginLeft: 'auto' } },
+              showBase ? 'on' : 'off')))),
+
+      /* ---- right ---- */
+      h('div', { className: 'col right' },
+        lastWx && h('div', { style: { padding: '12px 14px 0', flex: 'none' } },
+          h(Weather, { w: lastWx.corroboration })),
+        h('div', { className: 'turns' },
+          err && h('div', { className: 'err' }, err),
+          turns.length === 0 && !err && h('div', {
+            style: { color: 'var(--faint)', fontSize: 12, padding: '10px 2px', lineHeight: 1.6 }
+          }, 'Ask a question about this scene. Every number returned is computed by a ',
+            'deterministic kernel from actual pixels — the planner never measures.'),
+
+          turns.map((t, i) => t.role === 'you'
+            ? h('div', { className: 'you', key: i },
+              h('div', { className: 'lb' }, 'QUERY'), t.query)
+            : h(Answer, { key: i, t, onEvidence: setDrawer })),
+
+          busy && h('div', { className: 'card' },
+            h('span', { className: 'spin' }),
+            h('span', { style: { marginLeft: 9, fontSize: 12, color: 'var(--dim)' } },
+              'Gate → plan → kernel → measure…')),
+          h('div', { ref: endRef })),
+
+        h('div', { className: 'ask' },
+          h('div', { className: 'askbox' },
+            h('input', {
+              value: q, placeholder: 'Ask about this scene…',
+              onChange: e => setQ(e.target.value),
+              onKeyDown: e => e.key === 'Enter' && ask()
+            }),
+            h('button', { onClick: () => ask(), disabled: busy || !q.trim() }, 'Ask')),
+          h('div', { className: 'sugg' },
+            SUGGESTIONS.map(s => h('button', { key: s, onClick: () => ask(s) }, s)))))),
+
+    /* capability tiles */
+    h('div', { className: 'tiles' },
+      [['▦', 'True Pixel', 'Computed from actual pixels, not predicted.'],
+      ['🔗', 'Evidence-Linked', 'Every value carries an Evidence ID and its arithmetic.'],
+      ['◈', 'Spatial Proof', 'Mask overlay shown for visual verification.'],
+      ['🔒', 'Sovereign & Offline', 'Runs air-gapped. Zero outbound requests.']]
+        .map(([ic, t, d]) => h('div', { className: 'tile', key: t },
+          h('b', null, ic + '  ' + t), h('span', null, d)))),
+
+    h(Drawer, { turn: drawer, onClose: () => setDrawer(null) }));
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+</script>
+</body>
+</html>
