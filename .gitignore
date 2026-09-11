@@ -17,9 +17,22 @@ data/demo/truth.json
 data/demo/manifest.json
 data/demo/rainfall_supaul.csv
 
-# Real imagery, if anyone drops a Sentinel-2 scene in. Large, and licensing
-# varies by provider.
-data/real/
+# Real imagery from Bhoonidhi (NRSC / ISRO).
+#
+# The raw product directories are ~420 MB each and hold single-band BAND2/3/4/5
+# GeoTIFFs plus BAND_META.txt -- 3.4 GB for eight scenes, and nothing reads them
+# after ingest_liss3.py has run. Those stay out.
+#
+# data/real/converted/ IS tracked: eight 4-band GeoTIFFs, 10-17 MB each, 102 MB
+# total. Unlike data/demo/ these cannot be regenerated -- they came from a
+# Bhoonidhi account behind a login -- so the only way a teammate gets real ISRO
+# imagery is from the repository. scripts/verify_real.py reads them.
+#
+# Note the pattern: `data/real/*` excludes the CONTENTS, not the directory. A
+# trailing-slash `data/real/` would stop git descending into it at all and the
+# negation below could never re-include anything.
+data/real/*
+!data/real/converted/
 
 # Runtime evidence ledger. Created on first query, grows per session, and is
 # machine-local state rather than source.
