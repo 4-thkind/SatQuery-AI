@@ -27,6 +27,13 @@ from .schemas import AnswerPayload, SceneRef
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEMO = ROOT / "data" / "demo"
 
+# threshold_mask refusal codes that mean "the target class is not in this scene"
+# rather than "something went wrong". Both deserve a real explanation in the
+# narration, not a bare "analysis completed". Kept as a set so a new guard in
+# segmentation.py only has to add its code here.
+ABSENT_CLASS_REASONS = frozenset({"no_physical_support", "degenerate_split",
+                                  "unimodal_histogram"})
+
 _manifest_cache: dict | None = None
 _scene_cache: dict[str, BandStack] = {}
 
@@ -168,11 +175,13 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
     if thr and thr.ok:
         facts["threshold"] = thr.value["threshold"]
         layers["mask"] = thr.mask_handle
-    elif thr is not None and thr.provenance.get("failed") == "unimodal_histogram":
-        # The kernel refused to threshold a single-peaked histogram. That is an
-        # answer -- "this class is not present here" -- not a crash, so carry the
-        # reason into the narration instead of falling through to a bare
-        # "analysis completed" with no number and no explanation.
+    elif thr is not None and thr.provenance.get("failed") in ABSENT_CLASS_REASONS:
+        # The kernel refused to threshold because the target class is not there:
+        # either no pixels sit on the physically meaningful side of the index's
+        # zero crossing, or the histogram is degenerate. Both are an answer --
+        # "this class is not present here" -- not a crash, so carry the reason
+        # into the narration instead of falling through to a bare "analysis
+        # completed" with no number and no explanation.
         facts["absent"] = thr.caveats[0]
 
     # Every measure_area step in plan order. Step ids are NOT positions: the
