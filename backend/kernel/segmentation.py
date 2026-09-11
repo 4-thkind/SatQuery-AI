@@ -16,18 +16,55 @@ from ..schemas import ToolResult
 # Minimum between-class / total variance for an Otsu split to be believed.
 #
 # Otsu maximises this ratio, so it is precisely the quantity Otsu itself optimises.
-# Measured across the demo scenes (scripts/verify_scenes.py prints them):
+# Measured separability, by data source (scripts/verify_scenes.py and
+# scripts/verify_real.py both print these):
 #
-#   real two-class scenes   0.835 - 0.998   (water, built-up, burn, even under cloud)
-#   barren, no water at all 0.627           <- Otsu splitting a single peak
+#   synthetic demo scenes    0.835 - 0.998   piecewise-smooth, clean class edges
+#   synthetic barren         0.632           <- Otsu splitting a single peak
+#   REAL LISS-III scenes     0.482 - 0.786   <- genuine water, and it overlaps
 #
-# 0.75 sits in that gap. Note the margin is narrower than intuition suggests:
-# smooth spatial texture is autocorrelated, so even a one-class scene produces a
-# fairly confident-looking split. Do not raise this above ~0.80 without re-running
-# the demo scenes -- the cloudy scene is the tightest real case at 0.835.
-# One global constant. Make it per-index only if a real index turns out to need
-# a different floor.
-OTSU_MIN_SEPARABILITY = 0.75
+# That third row is the lesson from running on real Resourcesat imagery. Real
+# scenes are mixed pixels, haze gradients and continuous land-cover transitions,
+# so the between-class variance is far lower than a synthetic scene's even when
+# the target is unmistakably present. Barren's 0.632 sits INSIDE the real range,
+# which means no single value of this ratio can separate "target absent" from
+# "target present in real data". Raising the floor rejects real imagery; lowering
+# it re-admits the barren false positive.
+#
+# So the floor stays only as a weak sanity check on degenerate splits, and the
+# real work of catching an absent class moved to _physical_support() below --
+# which asks a question about reflectance physics rather than about histogram
+# shape. See the comment there.
+OTSU_MIN_SEPARABILITY = 0.35
+
+# Fraction of valid pixels that must sit on the physically meaningful side of an
+# index's natural zero crossing for the target class to be considered present.
+#
+# Measured MNDWI > 0 fraction:
+#
+#   synthetic barren (0 ha water, ground truth)   0.00%   <- nothing there
+#   real LISS-III, eight dates                    3.7% - 76.5%
+#   synthetic flood scenes                        2.3% - 25.5%
+#
+# 1% sits below every scene that genuinely contains the class and above the
+# negative control, which registers exactly zero. The gap is three orders of
+# magnitude, not a tuned margin -- that is what makes this a better guard than
+# the variance ratio.
+MIN_PHYSICAL_SUPPORT = 0.01
+
+# Index -> (physical zero crossing, which side means "target present").
+#
+# These are not fitted values. Normalised difference indices are constructed so
+# that the sign carries the meaning: NDWI and MNDWI exceed zero over open water
+# because water reflects green far more than NIR/SWIR (McFeeters 1996, Xu 2006);
+# NDVI exceeds zero wherever chlorophyll reflects NIR above red. An index whose
+# sign has no such interpretation is simply absent from this table and skips the
+# check rather than being given an invented threshold.
+PHYSICAL_ZERO = {
+    "ndwi": (0.0, "gt"),
+    "mndwi": (0.0, "gt"),
+    "ndvi": (0.0, "gt"),
+}
 
 
 def _otsu_separability(valid: np.ndarray, thr: float) -> float:
@@ -35,6 +72,10 @@ def _otsu_separability(valid: np.ndarray, thr: float) -> float:
 
     This is Otsu's own objective, normalised. Near 1 the two groups are cleanly
     separated; near 0 the "split" is an arbitrary cut through a single peak.
+
+    Useful for reporting, and for catching a fully degenerate split. Not
+    sufficient on its own to decide whether a class is present -- real imagery
+    scores much lower than synthetic imagery at identical correctness.
     """
     total_var = float(valid.var())
     if total_var <= 0:
@@ -44,6 +85,29 @@ def _otsu_separability(valid: np.ndarray, thr: float) -> float:
         return 0.0
     w0, w1 = lo.size / valid.size, hi.size / valid.size
     return float(w0 * w1 * (lo.mean() - hi.mean()) ** 2 / total_var)
+
+
+def _physical_support(valid: np.ndarray, index_name: str | None) -> float | None:
+    """Fraction of pixels on the physically meaningful side of the index's zero.
+
+    Returns None when the index has no meaningful zero crossing, in which case
+    the caller skips this check rather than inventing a threshold.
+
+    Why this exists: Otsu will always return a threshold, even on a histogram
+    with one peak, and on a scene containing no water it puts that threshold deep
+    in negative MNDWI and reports half the tile as water. The variance ratio does
+    not reliably catch it -- real imagery is noisy enough to look similar. But
+    the physics does: MNDWI is negative everywhere on land, so a scene with no
+    water has essentially no pixels above zero, while a scene with water has
+    percent-scale support regardless of how messy the histogram is.
+    """
+    if not index_name:
+        return None
+    entry = PHYSICAL_ZERO.get(index_name.lower())
+    if entry is None:
+        return None
+    zero, side = entry
+    return float((valid > zero).mean() if side == "gt" else (valid < zero).mean())
 
 
 def threshold_mask(bs: BandStack, session, raster_handle: str, mode: str = "otsu",
@@ -72,25 +136,60 @@ def threshold_mask(bs: BandStack, session, raster_handle: str, mode: str = "otsu
     elif mode == "otsu":
         thr = float(threshold_otsu(valid))
         sep = _otsu_separability(valid, thr)
-        if sep < OTSU_MIN_SEPARABILITY:
-            # Otsu always returns a threshold, including on a unimodal histogram
-            # where there are no two classes to separate. On a scene with no water
-            # at all it splits the noise about the mean and reports half the tile
-            # as water -- a plausible wrong number, which is the exact failure this
-            # system exists to prevent. Refuse instead.
+
+        # Guard 1, physics. The index name travels in the handle, which is
+        # shaped "mndwi_raster#1" -- so the leading segment names the index and
+        # is what tells this check which zero crossing applies.
+        index_name = raster_handle.split("#")[0].split("_")[0]
+        support = _physical_support(valid, index_name)
+        if support is not None and support < MIN_PHYSICAL_SUPPORT:
+            # Otsu always returns a threshold, including on a histogram with a
+            # single peak where there are no two classes to separate. On a scene
+            # with no water at all it splits the noise about the mean and reports
+            # half the tile as water -- a plausible wrong number, which is the
+            # exact failure this system exists to prevent.
+            #
+            # The physical zero catches it where histogram shape does not: MNDWI
+            # is negative over land everywhere, so a scene without water has
+            # essentially no pixels above zero no matter how the histogram looks.
+            zero, side = PHYSICAL_ZERO[index_name.lower()]
             return ToolResult(
                 ok=False,
                 caveats=[
-                    f"Otsu found no bimodal split in this raster: between-class "
-                    f"variance is only {sep:.3f} of the total (a real two-class "
-                    f"scene sits well above {OTSU_MIN_SEPARABILITY}). The histogram "
-                    f"is single-peaked, so the target class is most likely absent "
-                    f"from this scene. Returning no mask rather than thresholding "
-                    f"noise into a plausible wrong area."],
-                provenance={"tool": "threshold_mask", "failed": "unimodal_histogram",
+                    f"Only {support:.3%} of pixels have {index_name.upper()} "
+                    f"{'>' if side == 'gt' else '<'} {zero:g}, below the "
+                    f"{MIN_PHYSICAL_SUPPORT:.0%} needed for the target class to be "
+                    f"considered present. Otsu would still return a threshold "
+                    f"({thr:.3f}) and that threshold would split noise, so this "
+                    f"returns no mask rather than a plausible wrong area."],
+                provenance={"tool": "threshold_mask", "failed": "no_physical_support",
+                            "index": index_name, "otsu_threshold": round(thr, 4),
+                            "physical_support": round(support, 6),
+                            "min_physical_support": MIN_PHYSICAL_SUPPORT,
+                            "separability": round(sep, 4)})
+
+        # Guard 2, degeneracy. A weak backstop for indices with no meaningful
+        # zero crossing. Deliberately low: real imagery separates far less
+        # cleanly than synthetic imagery at identical correctness, so a high
+        # floor here rejects genuine scenes. See the constant's comment.
+        if sep < OTSU_MIN_SEPARABILITY:
+            return ToolResult(
+                ok=False,
+                caveats=[
+                    f"Otsu found no usable split in this raster: between-class "
+                    f"variance is only {sep:.3f} of the total. The histogram is "
+                    f"effectively single-peaked, so the target class is most "
+                    f"likely absent from this scene. Returning no mask rather "
+                    f"than thresholding noise into a plausible wrong area."],
+                provenance={"tool": "threshold_mask", "failed": "degenerate_split",
                             "otsu_threshold": round(thr, 4),
                             "separability": round(sep, 4),
                             "min_separability": OTSU_MIN_SEPARABILITY})
+
+        if support is not None:
+            caveats.append(f"{support:.1%} of pixels sit on the water/vegetation "
+                           f"side of {index_name.upper()}=0, supporting the "
+                           f"presence of the target class.")
         caveats.append(f"Threshold {thr:.3f} chosen automatically by Otsu's method "
                        f"from this scene's own histogram, not from a fixed "
                        f"literature value. Between-class separability {sep:.3f}.")
