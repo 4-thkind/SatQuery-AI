@@ -115,3 +115,45 @@ CODEBASE_GUIDE.md
 notes/
 scratch/
 *.local.md
+
+# ---------------------------------------------------------------------------
+# Round 2 datasets and model weights
+#
+# All of these are downloaded, not authored, and are far too large for version
+# control. The commands that fetch them are in ROUND2_PLAN.md so anyone can
+# reproduce the working tree from scratch.
+# ---------------------------------------------------------------------------
+BigEarthNet.txt/
+data/bigearthnet/
+data/ben/
+data/cdvqa/
+data/vrsbench/
+data/rsvqa/
+Encoded-BigEarthNet/
+*.parquet
+*.lmdb
+*.mdb
+
+# Model weights and adapters
+checkpoints/
+models/
+*.safetensors
+*.bin
+*.pth
+*.ckpt
+adapters/
+
+# ---------------------------------------------------------------------------
+# molab training artifacts
+#
+# The notebook downloaded back from molab and the results archive it produces.
+# The notebook of record is notebooks/train_satquery.py, which IS tracked; the
+# .ipynb is a round-trip export of the same cells, and the zip is 374 MB of
+# adapter weights that live in the private HF repo instead.
+# ---------------------------------------------------------------------------
+satquery*.ipynb
+satquery_full*.zip
+satquery_numbers*.zip
+
+# Shallow clone of the BigEarthNet.txt dataset repo, pulled for the parquet.
+# Git-LFS objects inside it are over GitHub's 100 MB per-file limit.
