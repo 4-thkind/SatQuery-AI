@@ -55,13 +55,23 @@ INTENT_LEXICON = {
         "change", "changed", "difference", "compare", "before and after",
         "increase", "decrease", "growth", "expanded", "shrunk", "since",
         "badla", "बदलाव", "अंतर", "tulna", "versus", " vs ",
-        "ਬਦਲਾਅ", "ਤਬਦੀਲੀ", "পরিবর্তন", "মাற்றம்", "மாற்றம்", "మార్పు",
+        "ਬਦਲਾਅ", "ਤਬਦੀਲੀ", "পরিবর্তন", "மாற்றம்", "மாற்றம்", "మార్పు",
         "ಬದಲಾವಣೆ", "മാറ്റം",
     ],
     "scene_describe": [
         "describe", "what is", "what's in", "overview", "summary", "tell me about",
         "kya hai", "क्या है", "batao", "बताओ",
         "ਕੀ ਹੈ", "ਦੱਸੋ", "কি আছে", "বলুন", "என்ன", "ఏమి", "ಏನು", "എന്ത്",
+    ],
+    "method_explain": [
+        "meaning of", "what is the meaning", "meaning", "definition of", "define",
+        "explain", "explanation", "how does", "why do we", "why does",
+        "what does", "formula", "algorithm", "otsu", "thresholding", "methodology",
+        "ka matlab", "kya hota hai", "samjhao", "matlab", "मतलब", "परिभाषा", "समझाओ",
+        "how is", "how are", "how do we", "how do you", "how to", "how works",
+        "computed", "calculated", "measured", "working of", "architecture", "pipeline",
+        "satquery", "ledger", "guardrail", "confidence score", "masking done",
+        "index computed", "area measured", "change detection done",
     ],
 }
 
@@ -74,10 +84,24 @@ CHANGE_MARKERS = INTENT_LEXICON["change_detect"] + [
     "over time", "trend", "pehle", "पहले", "zyada", "ज्यादा", "kam ",
 ]
 
+# Terms that indicate the user wants a pixel / area measurement on the active scene
+MEASURE_MARKERS = [
+    "how much", "how many", "kitna", "kitne", "in this scene", "this scene",
+    "hectares", " ha ", "show me", "detect ", "calculate the", "measure the",
+]
+
+EXPLAIN_MARKERS = [
+    "how is", "how are", "how does", "how do we", "how do you", "how to",
+    "how works", "explain", "meaning of", "definition", "define",
+    "ka matlab", "kya hota hai", "samjhao", "what is satquery", "architecture",
+    "how satquery", "pipeline", "ledger", "guardrail", "formula", "algorithm",
+    "methodology", "how area is measured", "how index is computed", "how masking done",
+]
+
 # Checked in order; the first match wins when scores tie. Specific before generic.
 PRIORITY = ["flood_extent", "burn_severity", "builtup_extent", "crop_stress",
             "vegetation_health", "shoreline", "water_extent", "object_count",
-            "change_detect", "scene_describe"]
+            "change_detect", "method_explain", "scene_describe"]
 
 
 def _norm(q: str) -> str:
@@ -99,9 +123,15 @@ def classify(query: str) -> tuple[str, bool, dict]:
             scores[intent] = hits
 
     is_change = any(t in q for t in CHANGE_MARKERS)
+    is_measure = any(m in q for m in MEASURE_MARKERS)
+    is_explain = any(e in q for e in EXPLAIN_MARKERS)
+
+    # Explanatory / conceptual query: definition, meaning, or algorithm without scene measurement
+    if (is_explain or "method_explain" in scores) and not is_measure:
+        return "method_explain", False, scores
 
     subject = {k: v for k, v in scores.items()
-               if k not in ("change_detect", "scene_describe")}
+               if k not in ("change_detect", "scene_describe", "method_explain")}
     if subject:
         best = max(subject.values())
         for intent in PRIORITY:
@@ -109,6 +139,8 @@ def classify(query: str) -> tuple[str, bool, dict]:
                 return intent, is_change, scores
     if is_change:
         return "change_detect", True, scores
+    if "method_explain" in scores:
+        return "method_explain", False, scores
     return "scene_describe", False, scores
 
 
@@ -116,7 +148,7 @@ def _demo() -> None:
     cases = [
         ("How much area is flooded in this scene?", "flood_extent", False),
         ("kitna area baadh me hai", "flood_extent", False),
-        ("बाढ़ का क्षेत्र कितना है", "flood_extent", False),
+        ("बाढ़ का क्षेत्रफल कितना है", "flood_extent", False),
         ("What is the water extent?", "water_extent", False),
         ("paani kitna hai", "water_extent", False),
         ("How much more water than before?", "water_extent", True),
@@ -126,6 +158,17 @@ def _demo() -> None:
         ("burnt forest area", "burn_severity", False),
         ("describe this scene", "scene_describe", False),
         ("what changed since last year", "change_detect", True),
+        ("what id the meaning of otsu", "method_explain", False),
+        ("what is otsu", "method_explain", False),
+        ("explain ndvi", "method_explain", False),
+        ("otsu ka matlab kya hai", "method_explain", False),
+        ("how does masking done", "method_explain", False),
+        ("how index is computed", "method_explain", False),
+        ("how area is measured", "method_explain", False),
+        ("how do we compute ndvi", "method_explain", False),
+        ("how is change detection done", "method_explain", False),
+        ("what is the evidence ledger", "method_explain", False),
+        ("how does satquery work", "method_explain", False),
     ]
     for q, want_intent, want_change in cases:
         got, change, scores = classify(q)

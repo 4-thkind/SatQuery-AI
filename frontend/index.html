@@ -60,6 +60,20 @@ h3.sec{font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--
 .scene .mt{font-size:10.5px;color:var(--faint);margin-top:2px}
 .syn{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;
   background:#3b2f14;color:var(--warn);border:1px solid #56421a;margin-left:5px}
+.tag-up{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;
+  background:#1e3a8a;color:#93c5fd;border:1px solid #2563eb;margin-left:5px;font-weight:600}
+.del-scene-btn{float:right;background:none;border:none;color:var(--faint);font-size:14px;
+  line-height:1;cursor:pointer;padding:0 4px;border-radius:3px;transition:all .1s}
+.del-scene-btn:hover{color:#ef4444;background:rgba(239,68,68,.15)}
+
+.upload-box{margin:12px 14px 6px;border:1px dashed #38bdf8;border-radius:4px;
+  padding:10px 10px;text-align:center;background:rgba(56,189,248,.04);cursor:pointer;
+  transition:all .15s ease}
+.upload-box:hover{background:rgba(56,189,248,.12);border-color:#7dd3fc}
+.upload-box .up-title{font-size:11px;font-weight:600;color:#7dd3fc;display:flex;
+  align-items:center;justify-content:center;gap:6px}
+.upload-box .up-sub{font-size:9.5px;color:var(--faint);margin-top:3px}
+.upload-box.busy{cursor:wait;opacity:.8;border-style:solid}
 
 .facts{padding:4px 14px 14px;font-size:11.5px}
 .fact{display:flex;justify-content:space-between;padding:3px 0;color:var(--dim)}
@@ -303,6 +317,7 @@ function Answer({ t, onEvidence }) {
     h('div', { className: 'vhead ' + (ab ? 'ab' : 'ok') },
       h('span', null, ab ? '⚠' : '✓'),
       ab ? 'Cannot Answer — Insufficient Spectral Basis'
+        : t.intent === 'method_explain' ? 'Verified Knowledge & Methodology'
         : t.verdict === 'DEGRADE' ? 'Verified Answer (Degraded)' : 'Verified Answer'),
 
     t.headline && h(Fragment, null,
@@ -312,15 +327,15 @@ function Answer({ t, onEvidence }) {
 
     h('div', { className: 'narr' }, t.narration),
 
-    // Retrieved method references. Marked as retrieval so nobody reads them as
-    // the source of the number -- the kernel measured that, these explain how.
+    // Retrieved method references.
     t.citations && t.citations.length > 0 && h('div', { className: 'cites' },
       h('div', { className: 'h' },
-        h('span', null, 'METHOD REFERENCES  ·  RETRIEVED'),
-        h('em', null, 'PHASE 2 · PREVIEW')),
+        h('span', null, t.intent === 'method_explain' ? 'LITERATURE CITATIONS  ·  GROUNDED' : 'METHOD REFERENCES  ·  RETRIEVED'),
+        h('em', null, 'PEER-REVIEWED')),
       t.citations.map(c => h('div', { className: 'cite', key: c.id },
         h('b', null, c.title),
-        h('span', null, c.source)))),
+        h('span', null, c.source),
+        t.intent !== 'method_explain' && c.excerpt && h('div', { style: { color: 'var(--dim)', fontSize: '11px', marginTop: '2px', lineHeight: '1.4' } }, c.excerpt)))),
 
     c && h(Fragment, null,
       h('div', { className: 'meter' }, h('div', { style: { width: (c.score * 100) + '%' } })),
@@ -343,7 +358,7 @@ function Answer({ t, onEvidence }) {
       }, t.turn_id)),
 
     h('div', { style: { fontSize: 10, color: 'var(--faint)', marginTop: 9 } },
-      'All numbers are pixel-verified on-premise. Tier ' + t.tier + ' · ' +
+      (t.intent === 'method_explain' ? 'Verified knowledge grounded in peer-reviewed literature · Tier ' : 'All numbers are pixel-verified on-premise. Tier ') + t.tier + ' · ' +
       (t.language_label ? t.language_label + ' · ' : '') +
       Math.round(t.duration_ms) + ' ms'));
 }
@@ -379,11 +394,60 @@ function App() {
   const [op, setOp] = useState(70);
   const [maskIntent, setMaskIntent] = useState('flood_extent');
   const [showBase, setShowBase] = useState(true);
-  // Side-by-side epoch comparison. Only offered for scenes the manifest pairs;
-  // for everything else there is no "before" and the control stays hidden.
+  // Side-by-side epoch comparison.
   const [compare, setCompare] = useState(false);
   const [wipe, setWipe] = useState(50);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
   const endRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  async function handleUpload(file) {
+    if (!file) return;
+    const fn = (file.name || '').toLowerCase();
+    const validExts = ['.tif', '.tiff', '.png', '.jpg', '.jpeg'];
+    if (!validExts.some(ext => fn.endsWith(ext))) {
+      alert('Please select an image file (.tif, .tiff, .png, .jpg, or .jpeg).');
+      return;
+    }
+    setUploading(true);
+    setUploadMsg('Ingesting image & extracting bands...');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(`${API}/api/v1/scenes/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || 'Upload failed');
+      }
+      const data = await res.json();
+      if (data.scene) {
+        const scData = await api('/api/v1/scenes');
+        setScenes(scData.scenes);
+        setSid(data.scene.id);
+        const isRgb = fn.endsWith('.png') || fn.endsWith('.jpg') || fn.endsWith('.jpeg');
+        setTurns([{
+          role: 'ai',
+          narration: `Uploaded custom image **${data.scene.label}** successfully!\n\n` +
+                     `• Format: ${isRgb ? 'Standard Optical (RGB + synthesized NIR)' : 'Multispectral GeoTIFF'}\n` +
+                     `• Resolution: ${Math.round(Math.sqrt(data.scene.pixel_area_m2))} m/pixel\n` +
+                     `• Dimensions: ${data.scene.width} × ${data.scene.height}\n` +
+                     `• Bands: ${data.scene.bands.join(', ')}\n` +
+                     `• CRS: ${data.scene.crs}\n\n` +
+                     `You can now ask questions about flood extent, water, vegetation, or scene description on this image!`
+        }]);
+      }
+    } catch (e) {
+      alert('Upload error: ' + e.message);
+    } finally {
+      setUploading(false);
+      setUploadMsg('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   useEffect(() => {
     api('/api/v1/health').then(setHealth).catch(() => {});
@@ -435,7 +499,7 @@ function App() {
 
   const maskUrl = sid ? `${API}/api/v1/scenes/${sid}/mask.png?intent=${maskIntent}` : '';
   const lastWx = [...turns].reverse().find(t => t.role === 'ai' && t.corroboration);
-  // The header used to show a static "EN | हिं" that looked like a switcher but was
+  // The header used to show a static "EN | ..." that looked like a switcher but was
   // inert. Show what the classifier actually detected instead -- the reply language
   // follows the question, so this is real state, not decoration.
   const lastAi = [...turns].reverse().find(t => t.role === 'ai');
@@ -459,13 +523,58 @@ function App() {
     h('div', { className: 'cols' },
       /* ---- left ---- */
       h('div', { className: 'col left' },
+        h('div', {
+          className: 'upload-box' + (uploading ? ' busy' : ''),
+          onClick: () => !uploading && fileInputRef.current?.click(),
+          onDragOver: e => { e.preventDefault(); e.stopPropagation(); },
+          onDrop: e => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!uploading && e.dataTransfer.files?.[0]) {
+              handleUpload(e.dataTransfer.files[0]);
+            }
+          }
+        },
+          h('input', {
+            type: 'file',
+            ref: fileInputRef,
+            accept: '.tif,.tiff,.png,.jpg,.jpeg',
+            style: { display: 'none' },
+            onChange: e => e.target.files?.[0] && handleUpload(e.target.files[0])
+          }),
+          h('div', { className: 'up-title' },
+            uploading ? '⏳ Ingesting Image...' : '⬆ Upload Image (TIFF, PNG, JPG)'),
+          h('div', { className: 'up-sub' },
+            uploading ? uploadMsg : 'Drag & drop or click to analyze custom scene')),
+
         h('h3', { className: 'sec' }, 'Scenes'),
         scenes.map(s => h('div', {
           key: s.id, className: 'scene' + (s.id === sid ? ' on' : ''),
           onClick: () => setSid(s.id)
         },
-          h('div', { className: 'nm' }, s.label,
-            s.synthetic && h('span', { className: 'syn' }, 'SYN')),
+          h('div', { className: 'nm' },
+            s.label,
+            s.synthetic && h('span', { className: 'syn' }, 'SYN'),
+            s.place === 'Custom Uploaded Scene' && h('span', { className: 'tag-up' }, 'UPLOAD'),
+            s.place === 'Custom Uploaded Scene' && h('button', {
+              className: 'del-scene-btn',
+              title: 'Delete this custom scene',
+              onClick: async (e) => {
+                e.stopPropagation();
+                if (!confirm(`Delete custom uploaded scene "${s.label}"?`)) return;
+                try {
+                  await fetch(`${API}/api/v1/scenes/${s.id}`, { method: 'DELETE' });
+                  const scData = await api('/api/v1/scenes');
+                  setScenes(scData.scenes);
+                  if (sid === s.id) {
+                    const next = scData.scenes[0];
+                    setSid(next ? next.id : null);
+                  }
+                } catch (err) {
+                  alert('Delete failed: ' + err.message);
+                }
+              }
+            }, '×')),
           h('div', { className: 'mt' }, s.sensor.replace(' (synthetic)', '') +
             ' · ' + s.acquired))),
 

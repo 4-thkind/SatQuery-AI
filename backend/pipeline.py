@@ -22,7 +22,7 @@ from .planner.places import coverage_message, detect as detect_place, is_covered
 from .rag.retriever import get as get_retriever
 from .planner.tier_c import build_plan, compose_confidence, narrate
 from .planner.validator import validate_narration
-from .schemas import AnswerPayload, SceneRef
+from .schemas import AnswerPayload, Confidence, SceneRef
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEMO = ROOT / "data" / "demo"
@@ -36,6 +36,26 @@ ABSENT_CLASS_REASONS = frozenset({"no_physical_support", "degenerate_split",
 
 _manifest_cache: dict | None = None
 _scene_cache: dict[str, BandStack] = {}
+_uploaded_scenes: dict[str, dict] = {}
+
+
+def get_uploaded_scenes() -> dict[str, dict]:
+    global _uploaded_scenes
+    from .core.uploader import load_uploaded_manifest
+    disk_manifest = load_uploaded_manifest()
+    _uploaded_scenes = dict(disk_manifest)
+    return _uploaded_scenes
+
+
+def register_uploaded_scene(entry: dict) -> None:
+    global _uploaded_scenes
+    _uploaded_scenes[entry["id"]] = entry
+
+
+def unregister_uploaded_scene(scene_id: str) -> None:
+    global _uploaded_scenes, _scene_cache
+    _uploaded_scenes.pop(scene_id, None)
+    _scene_cache.pop(scene_id, None)
 
 
 def manifest() -> dict:
@@ -46,11 +66,17 @@ def manifest() -> dict:
 
 
 def scene_refs() -> list[SceneRef]:
-    return [SceneRef(**{k: v for k, v in s.items() if k in SceneRef.model_fields})
-            for s in manifest()["scenes"]]
+    bundled = [SceneRef(**{k: v for k, v in s.items() if k in SceneRef.model_fields})
+               for s in manifest()["scenes"]]
+    uploaded = [SceneRef(**{k: v for k, v in s.items() if k in SceneRef.model_fields})
+                for s in get_uploaded_scenes().values()]
+    return uploaded + bundled
 
 
 def scene_entry(scene_id: str) -> dict:
+    up = get_uploaded_scenes()
+    if scene_id in up:
+        return up[scene_id]
     for s in manifest()["scenes"]:
         if s["id"] == scene_id:
             return s
@@ -122,6 +148,76 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
                 scene_ids=[scene_id] + ([scene_id_b] if scene_id_b else []),
                 feasibility=verdict, tier=tier,
                 language=lang, language_label=language_label(lang))
+
+    # Dynamic RAG check for conceptual/methodology questions falling through to scene_describe
+    if intent == "scene_describe":
+        norm_q = query.lower()
+        is_explicit_describe = any(w in norm_q for w in ["describe", "overview", "summary", "kya hai", "in this scene", "this scene", "batao", "scene"])
+        if not is_explicit_describe:
+            candidate_cites = get_retriever().cite(query, k=1)
+            if candidate_cites and candidate_cites[0]["score"] >= 0.38:
+                intent = "method_explain"
+                base["intent"] = "method_explain"
+
+    if intent == "method_explain":
+        citations = get_retriever().cite(query, k=3)
+        if citations:
+            top = citations[0]
+            title = top.get("title", "Methodology Reference")
+            source = top.get("source", "")
+            text = top.get("text") or top.get("excerpt", "")
+
+            narration = f"{title}\n\n{text}"
+            if source:
+                narration += f"\n\nSource: {source}"
+
+            conf = Confidence(
+                score=1.0,
+                band="High",
+                components={
+                    "retrieval_relevance": float(top.get("score", 1.0)),
+                    "literature_grounding": 1.0,
+                },
+                explanation=f"Direct retrieval from verified literature citation: {source}." if source else "Direct retrieval from verified knowledge base.",
+            )
+            verdict.verdict = "ANSWER"
+            return AnswerPayload(
+                **{**base, "verdict": "ANSWER"},
+                narration=narration,
+                headline=None,
+                confidence=conf,
+                evidence=[],
+                layers={},
+                plan=None,
+                corroboration=None,
+                citations=citations,
+                duration_ms=round((time.perf_counter() - t0) * 1000, 2),
+            )
+        else:
+            verdict.verdict = "ABSTAIN"
+            narration = (
+                "This query is outside the remote sensing and spectral analysis knowledge base. "
+                "The local corpus covers satellite sensors (Sentinel-2, LISS-III, RISAT-1), "
+                "spectral indices (NDVI, NDWI, MNDWI, NDBI, NBR), and segmentation algorithms "
+                "(Otsu thresholding)."
+            )
+            return AnswerPayload(
+                **{**base, "verdict": "ABSTAIN"},
+                narration=narration,
+                headline=None,
+                confidence=Confidence(
+                    score=0.0,
+                    band="Low",
+                    components={"corpus_coverage": 0.0},
+                    explanation="No relevant literature found in the local knowledge base.",
+                ),
+                evidence=[],
+                layers={},
+                plan=None,
+                corroboration=None,
+                citations=[],
+                duration_ms=round((time.perf_counter() - t0) * 1000, 2),
+            )
 
     # --- coverage gate: does the question name a place we hold? ------------
     # Runs before the feasibility gate and before any measurement. A question
@@ -341,6 +437,11 @@ def _demo() -> None:
     d2 = answer("describe this scene", "barren").narration
     assert d1 != d2 and "index means" in d1 and "index means" in d2
     assert "withheld" not in d1, "overview numerals failed the guard"
+
+    # 10. Knowledge / methodology questions return direct RAG explanation
+    o = answer("what id the meaning of otsu", "bihar_post_flood")
+    assert o.verdict == "ANSWER" and o.intent == "method_explain" and o.headline is None
+    assert "Otsu" in o.narration and "variance" in o.narration
 
     print(f"pipeline: ok")
     print(f"  flood       {a.headline['value']} ha  conf {a.confidence.score} "

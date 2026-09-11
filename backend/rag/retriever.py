@@ -1,15 +1,12 @@
-"""Local document retrieval. Phase 2, first working slice.
+"""Local document retrieval using dense-vector embeddings and FAISS.
 
-Scope, stated plainly: this is BM25 over a small hand-written corpus. It is not
-the dense-vector retriever the full design calls for. What it does have is the
-shape that matters -- a corpus on disk, a scored retrieval, and citations that
-reach the evidence ledger -- so swapping the scorer for embeddings + FAISS later
-touches this file and nothing else.
+Scope: Dense semantic search using sentence-transformers (all-MiniLM-L6-v2)
+and FAISS (IndexFlatIP with normalized vectors for cosine similarity) over
+the local satellite knowledge corpus.
 
-Why BM25 first rather than embeddings: sentence-transformers pulls in torch,
-roughly half a gigabyte, to serve about a dozen chunks. On a corpus this size
-lexical matching is not obviously worse, and the whole point of the interface is
-that the scorer is replaceable. `search()` is the seam.
+The public API (search, cite, Chunk dataclass) remains unchanged from the
+initial BM25 implementation so that downstream consumers (pipeline, ledger,
+FastAPI app) continue to work seamlessly.
 
 The invariant is unchanged and this module is deliberately powerless to break it:
 retrieval returns TEXT ONLY. It never produces a number, and nothing it returns
@@ -18,22 +15,12 @@ reaches the measurement path. The kernel measures; this explains the method.
 
 from __future__ import annotations
 
-import math
 import pathlib
 import re
-from collections import Counter
 from dataclasses import dataclass, field
+import numpy as np
 
 CORPUS = pathlib.Path(__file__).resolve().parents[2] / "data" / "knowledge" / "corpus.md"
-
-# Words carrying no retrieval signal. Deliberately short: an aggressive stop list
-# on a corpus this small removes more signal than noise.
-STOP = {
-    "the", "a", "an", "and", "or", "of", "to", "in", "is", "are", "was", "were",
-    "for", "on", "with", "as", "at", "by", "from", "that", "this", "it", "be",
-    "which", "than", "so", "not", "but", "its", "their", "there", "how", "what",
-    "when", "why", "does", "do", "can", "will", "would", "should", "has", "have",
-}
 
 
 @dataclass
@@ -44,16 +31,6 @@ class Chunk:
     tags: list[str]
     text: str
     tokens: list[str] = field(default_factory=list)
-
-
-def tokenise(s: str) -> list[str]:
-    """Lowercase word tokens, stopwords dropped.
-
-    Index names are kept whole: NDVI and MNDWI must not be split, and a bare
-    number in the text is never a retrieval key.
-    """
-    return [w for w in re.findall(r"[a-z0-9]+", s.lower())
-            if w not in STOP and len(w) > 1]
 
 
 def load_chunks(path: pathlib.Path = CORPUS) -> list[Chunk]:
@@ -78,64 +55,77 @@ def load_chunks(path: pathlib.Path = CORPUS) -> list[Chunk]:
             continue
         cid = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48]
         c = Chunk(id=cid, title=title, source=source, tags=tags, text=text)
-        # Title and tags are repeated into the token stream: a chunk titled
-        # "MNDWI" should win a query mentioning MNDWI even if the body says it
-        # once. Cheap substitute for a field-weighted index.
-        c.tokens = tokenise(f"{title} {' '.join(tags)} {title} {text}")
         out.append(c)
     return out
 
 
 class Retriever:
-    """BM25 over the corpus. Built once, queried per request."""
+    """Dense semantic retrieval over the corpus using FAISS and sentence-transformers."""
 
-    K1 = 1.5      # term-frequency saturation
-    B = 0.75      # length normalisation
+    MODEL_NAME = "all-MiniLM-L6-v2"
+    DEFAULT_MIN_SCORE = 0.30  # Cosine similarity threshold for relevance
 
-    def __init__(self, chunks: list[Chunk] | None = None):
+    def __init__(self, chunks: list[Chunk] | None = None, model_name: str = MODEL_NAME):
+        import faiss
+        from sentence_transformers import SentenceTransformer
+
         self.chunks = chunks if chunks is not None else load_chunks()
         self.N = len(self.chunks)
-        self.avg_len = (sum(len(c.tokens) for c in self.chunks) / self.N) if self.N else 0.0
-        df = Counter()
-        for c in self.chunks:
-            for w in set(c.tokens):
-                df[w] += 1
-        # Standard BM25 IDF with the +1 that keeps it non-negative for terms
-        # appearing in most documents -- without it a common term scores below
-        # zero and actively penalises a chunk for containing the query word.
-        self.idf = {w: math.log(1 + (self.N - n + 0.5) / (n + 0.5))
-                    for w, n in df.items()}
-        self._tf = [Counter(c.tokens) for c in self.chunks]
+        self.model = SentenceTransformer(model_name)
 
-    def search(self, query: str, k: int = 3, min_score: float = 1.0
+        if self.N > 0:
+            # Build dense representations capturing title, tags, and document body
+            corpus_texts = [
+                f"{c.title}\nTags: {', '.join(c.tags)}\n\n{c.text}"
+                for c in self.chunks
+            ]
+            embeddings = self.model.encode(
+                corpus_texts,
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            ).astype(np.float32)
+
+            dim = embeddings.shape[1]
+            self.index = faiss.IndexFlatIP(dim)
+            self.index.add(embeddings)
+        else:
+            self.index = None
+
+    def search(self, query: str, k: int = 3, min_score: float = DEFAULT_MIN_SCORE
                ) -> list[tuple[Chunk, float]]:
-        """Top-k chunks above `min_score`.
+        """Top-k chunks above `min_score` using cosine similarity.
 
         The floor matters: an unrelated question should return nothing rather
         than the least-bad chunk. Citing an irrelevant source is worse than
         citing none, because it looks like grounding while providing none.
         """
-        q = tokenise(query)
-        if not q or not self.N:
+        if not query.strip() or not self.N or self.index is None:
             return []
-        scored = []
-        for i, c in enumerate(self.chunks):
-            tf, dl, s = self._tf[i], len(c.tokens), 0.0
-            for w in q:
-                f = tf.get(w, 0)
-                if not f:
-                    continue
-                denom = f + self.K1 * (1 - self.B + self.B * dl / self.avg_len)
-                s += self.idf.get(w, 0.0) * f * (self.K1 + 1) / denom
-            if s >= min_score:
-                scored.append((c, round(s, 3)))
-        scored.sort(key=lambda x: -x[1])
-        return scored[:k]
+
+        q_emb = self.model.encode(
+            [query],
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        ).astype(np.float32)
+
+        k_search = min(k, self.N)
+        scores, indices = self.index.search(q_emb, k_search)
+
+        scored: list[tuple[Chunk, float]] = []
+        for idx, score in zip(indices[0], scores[0]):
+            s = float(score)
+            if idx != -1 and s >= min_score:
+                scored.append((self.chunks[idx], round(s, 3)))
+
+        return scored
 
     def cite(self, query: str, k: int = 3) -> list[dict]:
         """Retrieval formatted for the API and the evidence ledger."""
         return [{"id": c.id, "title": c.title, "source": c.source,
                  "score": s, "tags": c.tags,
+                 "text": c.text,
                  "excerpt": c.text.split("\n\n")[0][:320]}
                 for c, s in self.search(query, k)]
 

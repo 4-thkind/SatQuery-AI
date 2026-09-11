@@ -125,7 +125,7 @@ def _demo() -> None:
     import tempfile
     from .pipeline import answer
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         con = connect(pathlib.Path(d) / "t.db")
         p = answer("How much area is flooded?", "bihar_post_flood")
         tid = record(con, "sess-1", p)

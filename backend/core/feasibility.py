@@ -24,6 +24,7 @@ INTENT_REQUIREMENTS = {
     "crop_stress":       (["NIR", "RED"], [], "need_nir"),
     "object_count":      (["RED", "GREEN", "BLUE"], ["PAN"], "need_optical"),
     "scene_describe":    ([], [], None),
+    "method_explain":    ([], [], None),
     "change_detect":     ([], [], "need_two_scenes"),
     "shoreline":         (["GREEN", "NIR"], ["VV"], "need_nir_or_sar"),
 }

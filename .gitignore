@@ -16,6 +16,8 @@ data/demo/previews/
 data/demo/truth.json
 data/demo/manifest.json
 data/demo/rainfall_supaul.csv
+data/uploads/*.tif
+data/uploads/previews/
 
 # Real imagery from Bhoonidhi (NRSC / ISRO).
 #

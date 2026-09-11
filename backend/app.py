@@ -11,13 +11,15 @@ import os
 import pathlib
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from . import ledger as ledger_mod
-from .pipeline import DEMO, ROOT, answer, load_scene, manifest, scene_entry, scene_refs
+from .core.uploader import ingest_upload
+from .pipeline import (DEMO, ROOT, answer, load_scene, manifest,
+                       scene_entry, scene_refs, register_uploaded_scene)
 from .schemas import QueryRequest
 
 TIER = os.environ.get("SATQUERY_TIER", "C").upper()
@@ -52,7 +54,7 @@ def health():
             "C": "rule-based planner + template narration, no model weights",
         }.get(TIER, "unknown"),
         "kernel": "identical across tiers -- measured numbers do not change",
-        "scenes": manifest()["scene_count"],
+        "scenes": len(scene_refs()),
         "outbound_requests": OUTBOUND_REQUESTS,
         "offline": True,
     }
@@ -61,6 +63,36 @@ def health():
 @app.get("/api/v1/scenes")
 def scenes():
     return {"scenes": [s.model_dump() for s in scene_refs()]}
+
+
+@app.post("/api/v1/scenes/upload")
+async def upload_scene(
+    file: UploadFile = File(...),
+    label: str | None = Form(None),
+    sensor: str | None = Form(None),
+):
+    """Upload and register a custom GeoTIFF, PNG, or JPG satellite/aerial image."""
+    fn = file.filename or "uploaded.tif"
+    allowed_exts = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
+    if not any(fn.lower().endswith(ext) for ext in allowed_exts):
+        raise HTTPException(400, "Supported formats: .tif, .tiff, .png, .jpg, .jpeg")
+
+    try:
+        entry = ingest_upload(file.file, fn, label=label, sensor=sensor)
+        register_uploaded_scene(entry)
+        return {"status": "ok", "scene": entry}
+    except Exception as e:
+        raise HTTPException(422, f"Failed to ingest image: {str(e)}")
+
+
+@app.delete("/api/v1/scenes/{scene_id}")
+def delete_scene(scene_id: str):
+    """Delete a custom uploaded scene and its associated artifacts."""
+    from .core.uploader import remove_uploaded_scene
+    ok = remove_uploaded_scene(scene_id)
+    if not ok:
+        raise HTTPException(404, f"Custom scene {scene_id!r} not found or cannot be deleted.")
+    return {"status": "ok", "deleted": scene_id}
 
 
 @app.get("/api/v1/scenes/{scene_id}")
@@ -114,8 +146,8 @@ def knowledge(q: str = "", k: int = 4):
     """
     from .rag.retriever import get as _get
     r = _get()
-    return {"query": q, "chunks_indexed": r.N, "method": "bm25",
-            "embeddings": False, "network": False,
+    return {"query": q, "chunks_indexed": r.N, "method": "faiss+embeddings",
+            "embeddings": True, "network": False,
             "results": r.cite(q, k=k) if q else []}
 
 
@@ -156,7 +188,7 @@ def mask_png(scene_id: str, intent: str = "flood_extent"):
         reason = f"no spectral index for {intent} from bands {sorted(bs.roles)}"
     else:
         _, results = execute(plan, bs, s)
-        if "s2" not in results or not results["s2"].ok:
+        if "s2" not in results or not results["s2"].ok or not results["s2"].mask_handle:
             reason = "mask not computable for this scene"
         else:
             mask = s.get_array(results["s2"].mask_handle).astype(bool)
@@ -191,7 +223,7 @@ def _demo() -> None:
     assert h["status"] == "ok" and h["outbound_requests"] == 0, h
 
     sc = c.get("/api/v1/scenes").json()["scenes"]
-    assert len(sc) == 7, len(sc)
+    assert len(sc) >= 7, len(sc)
 
     r = c.post("/api/v1/query", json={"query": "How much area is flooded?",
                                       "scene_id": "bihar_post_flood"}).json()
@@ -204,6 +236,11 @@ def _demo() -> None:
     ab = c.post("/api/v1/query", json={"query": "burn scar area",
                                        "scene_id": "forest_burn"}).json()
     assert ab["verdict"] == "ABSTAIN" and ab["headline"] is None
+
+    kq = c.post("/api/v1/query", json={"query": "what id the meaning of otsu",
+                                       "scene_id": "bihar_post_flood"}).json()
+    assert kq["verdict"] == "ANSWER" and kq["intent"] == "method_explain" and kq["headline"] is None
+    assert "Otsu" in kq["narration"] and len(kq["citations"]) > 0
 
     png = c.get("/api/v1/scenes/bihar_post_flood/mask.png")
     assert png.status_code == 200 and png.content[:4] == b"\x89PNG"
