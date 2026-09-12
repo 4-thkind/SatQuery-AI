@@ -446,7 +446,25 @@ function Answer({ t, onEvidence, onExport }) {
     t.headline && h(Fragment, null,
       h('div', { className: 'herolb' },
         'Calculated ' + (t.headline.label || '').replace(/^\w/, x => x.toUpperCase()) + ' Area'),
-      h('div', { className: 'hero' }, fmt(t.headline.value), h('small', null, 'ha'))),
+      h('div', { className: 'hero' }, fmt(t.headline.value), h('small', null, 'ha')),
+      // When the Otsu threshold is unstable the point estimate is the least
+      // interesting number in the answer. Measured on a real monsoon scene:
+      // 21,383 ha headline, but +/-0.05 index units moves it between 21,217
+      // and 43,933 -- a swing wider than the figure itself. Showing the range
+      // is not hedging, it is the measurement; hiding it behind a confident
+      // hero number is what would mislead.
+      (() => {
+        const sens = (t.evidence || []).find(e => e.tool === 'threshold_sensitivity');
+        if (!sens || !sens.value || !t.confidence) return null;
+        if (t.confidence.components.threshold_stability >= 0.40) return null;
+        const has = Object.values(sens.value)
+          .map(v => v && v.hectares).filter(v => typeof v === 'number');
+        if (has.length < 2) return null;
+        return h('div', {
+          style: { fontSize: 11, color: 'var(--faint)', marginTop: -4, marginBottom: 6 }
+        }, 'threshold-sensitive: ' + fmt(Math.min(...has)) + ' – '
+           + fmt(Math.max(...has)) + ' ha across ±0.05 index units');
+      })()),
 
     h('div', { className: 'narr' }, currentNarration),
 
@@ -482,6 +500,16 @@ function Answer({ t, onEvidence, onExport }) {
       },
         h('span', null, 'Confidence: ' + c.band),
         h('span', null, c.score.toFixed(3) + (open ? '  ▾' : '  ▸'))),
+      // A bare 0.000 next to a confident-looking hectare figure reads as a
+      // broken widget. It is not: the score is a product of five measured
+      // components, so any one of them hitting zero zeroes the result, and
+      // c.explanation already names which. Surface it rather than hiding the
+      // reason behind a click.
+      c.score < 0.40 && c.explanation && h('div', {
+        className: 'kv',
+        style: { color: 'var(--faint)', fontSize: 10, lineHeight: 1.45,
+                 display: 'block', marginTop: 2 }
+      }, c.explanation),
       open && Object.entries(c.components).map(([k, v]) =>
         h('div', { className: 'kv', key: k }, h('span', null, k.replace(/_/g, ' ')), h('span', null, v)))),
 
