@@ -225,18 +225,6 @@ pre.json{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1p
 .lang-pill:hover{border-color:var(--accent);color:var(--ink)}
 .lang-pill.active{background:var(--accent);color:#06131c;font-weight:600;border-color:var(--accent)}
 
-/* ---- split swipe comparison slider ---- */
-.split-wrap{position:relative;width:100%;height:100%;user-select:none;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
-.split-under{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-.split-under img{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
-.split-over{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.split-over img{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
-.split-line{position:absolute;top:0;bottom:0;width:2px;background:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,.6);cursor:ew-resize;z-index:20}
-.split-handle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:#0f172a;border:2px solid #38bdf8;box-shadow:0 0 10px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;color:#38bdf8;font-size:10px;font-weight:700}
-.split-badge{position:absolute;bottom:10px;background:rgba(8,11,18,.85);border:1px solid var(--line);border-radius:2px;padding:4px 8px;font-size:10px;font-family:var(--mono);z-index:15;color:var(--dim)}
-.split-badge.left{left:12px}
-.split-badge.right{right:12px}
-
 /* ---- zoom controls ---- */
 .zoom-ctrls{position:absolute;top:12px;right:12px;display:flex;gap:4px;z-index:25}
 .zoom-btn{background:rgba(15,23,42,.85);border:1px solid var(--line);color:var(--dim);border-radius:3px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;cursor:pointer}
@@ -649,12 +637,8 @@ function App() {
   const [op, setOp] = useState(70);
   const [maskIntent, setMaskIntent] = useState('flood_extent');
   const [showBase, setShowBase] = useState(true);
-  // Side-by-side vs split swipe epoch comparison.
+  // Side-by-side epoch comparison.
   const [compare, setCompare] = useState(false);
-  const [cmpMode, setCmpMode] = useState('split');
-  const [sliderPos, setSliderPos] = useState(50);
-  const [isDraggingSlider, setIsDraggingSlider] = useState(false);
-  const splitWrapRef = useRef(null);
 
   // Zoom & pan state for raster stage.
   const [zoom, setZoom] = useState(1);
@@ -669,13 +653,6 @@ function App() {
   const [uploadMsg, setUploadMsg] = useState('');
   const endRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  function handleSliderMove(clientX) {
-    if (!splitWrapRef.current) return;
-    const rect = splitWrapRef.current.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
-    setSliderPos(Math.round(pct));
-  }
 
   async function handleUpload(file) {
     if (!file) return;
@@ -910,65 +887,17 @@ function App() {
           pairScene && h('button', {
             className: 'cmpbtn' + (compare ? ' on' : ''),
             onClick: () => setCompare(!compare),
-            title: 'Compare ' + pairScene.acquired + ' and ' + scene.acquired
+            title: 'Show ' + pairScene.acquired + ' beside ' + scene.acquired
           }, compare ? 'Exit compare' : 'Compare epochs'),
-          compare && pairScene && h('div', { className: 'seg', style: { marginLeft: 6 } },
-            ['split', 'side'].map(m => h('button', {
-              key: m, className: cmpMode === m ? 'on' : '', onClick: () => setCmpMode(m)
-            }, m === 'split' ? 'Split swipe' : 'Side-by-side'))),
           h('div', { style: { fontSize: 11, color: 'var(--faint)', marginLeft: 'auto' } },
             scene ? scene.bounds_wgs84.map(n => n.toFixed(3)).join(', ') : '')),
 
         h('div', { className: 'stage' },
-          // Interactive split swipe slider comparison
-          scene && compare && pairScene && cmpMode === 'split' && h('div', {
-            className: 'split-wrap',
-            ref: splitWrapRef,
-            onPointerDown: e => {
-              try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
-              setIsDraggingSlider(true);
-              handleSliderMove(e.clientX);
-            },
-            onPointerMove: e => {
-              if (isDraggingSlider) handleSliderMove(e.clientX);
-            },
-            onPointerUp: e => {
-              try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-              setIsDraggingSlider(false);
-            },
-            onPointerCancel: () => setIsDraggingSlider(false)
-          },
-            // Under layer: Epoch B (scene / AFTER)
-            h('div', { className: 'split-under' },
-              showBase && h('img', {
-                key: 'split-base-' + scene.id + '-' + view,
-                src: API + '/' + (view === 'false' ? scene.preview_false : scene.preview_natural)
-              }),
-              showMask && h('img', {
-                key: 'split-mask-' + maskUrl,
-                className: 'ov',
-                src: maskUrl,
-                style: { opacity: op / 100 },
-                onError: e => { e.target.style.display = 'none'; }
-              })),
-            // Over layer: Epoch A (pairScene / BEFORE)
-            h('div', {
-              className: 'split-over',
-              style: { clipPath: 'polygon(0 0, ' + sliderPos + '% 0, ' + sliderPos + '% 100%, 0 100%)' }
-            },
-              showBase && h('img', {
-                key: 'split-over-' + pairScene.id + '-' + view,
-                src: API + '/' + (view === 'false' ? pairScene.preview_false : pairScene.preview_natural)
-              })),
-            // Draggable divider line & handle
-            h('div', { className: 'split-line', style: { left: sliderPos + '%' } },
-              h('div', { className: 'split-handle' }, '↔')),
-            // Badges
-            h('div', { className: 'split-badge left' }, pairScene.acquired + ' (BEFORE)'),
-            h('div', { className: 'split-badge right' }, scene.acquired + ' (AFTER)')),
-
-          // Side-by-side epochs view
-          scene && compare && pairScene && cmpMode === 'side' && h('div', { className: 'cmp' },
+          // Side-by-side epochs. Both frames get the same preview treatment, so
+          // any visible difference is a difference in the pixels, not in how the
+          // two were rendered. The mask is drawn only on the current epoch --
+          // it was measured from that scene and belongs to it.
+          scene && compare && pairScene && h('div', { className: 'cmp' },
             [pairScene, scene].map((sc, i) => h('div', { className: 'half', key: sc.id },
               h('div', { className: 'epoch' },
                 h('b', null, sc.acquired),

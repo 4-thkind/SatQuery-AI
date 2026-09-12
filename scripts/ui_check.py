@@ -128,31 +128,22 @@ def main():
             fails.append(f"change hero = {h2!r}, expected ~{want2:,.2f}")
         pg.screenshot(path=OUT / "05-change.png")
 
-        # --- epoch compare & split swipe -----------------------------------
-        # Paired scenes offer both split-swipe slider and side-by-side views.
+        # --- epoch compare -------------------------------------------------
+        # Paired scenes must offer a before/after view, and the mask belongs to
+        # the AFTER frame only -- it was measured from that epoch.
         if not pg.locator(".cmpbtn").count():
             fails.append("paired scene offers no compare control")
         else:
             pg.locator(".cmpbtn").click()
-            pg.wait_for_selector(".split-wrap", timeout=10000)
-            if not pg.locator(".split-line").count():
-                fails.append("split swipe slider line missing")
-            if not pg.locator(".split-badge.left").count():
-                fails.append("split swipe BEFORE badge missing")
-            pg.screenshot(path=OUT / "08a-split-swipe.png")
-
-            # Switch to side-by-side mode
-            if pg.locator(".seg button", has_text="Side-by-side").count():
-                pg.locator(".seg button", has_text="Side-by-side").click()
-                pg.wait_for_selector(".cmp .half", timeout=10000)
-                if pg.locator(".cmp .half").count() != 2:
-                    fails.append("compare view did not render two epochs")
-                lbl = " ".join(pg.locator(".epoch").all_inner_texts())
-                if "BEFORE" not in lbl or "AFTER" not in lbl:
-                    fails.append(f"compare epochs unlabelled: {lbl!r}")
-                if pg.locator(".cmp .half").nth(0).locator("img.ov").count():
-                    fails.append("mask drawn on the BEFORE epoch it was not measured from")
-                pg.screenshot(path=OUT / "08-compare.png")
+            pg.wait_for_selector(".cmp .half", timeout=10000)
+            if pg.locator(".cmp .half").count() != 2:
+                fails.append("compare view did not render two epochs")
+            lbl = " ".join(pg.locator(".epoch").all_inner_texts())
+            if "BEFORE" not in lbl or "AFTER" not in lbl:
+                fails.append(f"compare epochs unlabelled: {lbl!r}")
+            if pg.locator(".cmp .half").nth(0).locator("img.ov").count():
+                fails.append("mask drawn on the BEFORE epoch it was not measured from")
+            pg.screenshot(path=OUT / "08-compare.png")
             pg.locator(".cmpbtn").click()
             pg.wait_for_timeout(300)
 
