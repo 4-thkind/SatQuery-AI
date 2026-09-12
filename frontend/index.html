@@ -231,22 +231,60 @@ pre.json{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1p
 .zoom-btn:hover{border-color:var(--accent);color:var(--ink);background:#1e293b}
 .zoom-btn.reset{width:auto;padding:0 7px;font-size:10.5px;font-family:var(--mono)}
 
-/* ---- report audit certificate modal ---- */
-.rep-scrim{position:fixed;inset:0;background:rgba(4,6,10,.82);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
-.rep-card{background:#11151c;border:1px solid #3b82f6;border-radius:4px;width:720px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.8);overflow:hidden}
-.rep-head{padding:14px 18px;background:#18202c;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
-.rep-body{padding:18px;overflow-y:auto;flex:1;font-size:12px;line-height:1.6}
-.rep-foot{padding:12px 18px;background:#18202c;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
-.rep-sec{margin-bottom:16px}
-.rep-sec-title{font-size:10.5px;text-transform:uppercase;letter-spacing:1.2px;color:var(--accent);font-weight:700;margin-bottom:6px;border-bottom:1px solid #1f2937;padding-bottom:3px}
-.rep-proof{background:#0a0d14;border:1px solid var(--line);border-left:3px solid var(--good);padding:9px 12px;border-radius:2px;font-family:var(--mono);font-size:11px;color:#d1d5db;margin-top:6px}
-.rep-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+/* ---- Apple Design: Report Audit Certificate Modal ---- */
+@keyframes repScrimIn{from{opacity:0;backdrop-filter:blur(0px)}to{opacity:1;backdrop-filter:blur(20px) saturate(180%)}}
+@keyframes repCardIn{from{opacity:0;transform:scale(0.96) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+
+.rep-scrim{position:fixed;inset:0;background:rgba(4,7,14,.78);backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%);z-index:50;display:flex;align-items:center;justify-content:center;padding:24px;animation:repScrimIn 220ms ease-out}
+.rep-card{background:rgba(13,18,30,.94);backdrop-filter:blur(48px) saturate(190%);-webkit-backdrop-filter:blur(48px) saturate(190%);border:1px solid rgba(255,255,255,.12);border-top:1px solid rgba(255,255,255,.28);border-radius:20px;width:760px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 32px 64px -16px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.05),inset 0 1px 0 rgba(255,255,255,.14);overflow:hidden;animation:repCardIn 320ms cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:#f1f5f9}
+.rep-head{padding:16px 22px;background:rgba(255,255,255,.025);border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-between}
+.rep-head-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.3);border-radius:9999px;padding:2px 8px;font-size:9.5px;font-weight:700;letter-spacing:0.06em;color:#38bdf8;text-transform:uppercase;margin-bottom:3px}
+.rep-head-title{font-size:14px;font-weight:700;letter-spacing:-0.015em;color:#f8fafc}
+.rep-head-sub{font-size:11px;color:#94a3b8;margin-top:1px}
+.rep-close-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#94a3b8;border-radius:9999px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;transition:all 120ms ease-out}
+.rep-close-btn:hover{background:rgba(255,255,255,.16);color:#fff;border-color:rgba(255,255,255,.24)}
+.rep-close-btn:active{transform:scale(0.92)}
+.rep-body{padding:20px 22px;overflow-y:auto;flex:1;font-size:12.5px;line-height:1.55;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}
+.rep-sec{margin-bottom:20px}
+.rep-sec:last-child{margin-bottom:4px}
+.rep-sec-title{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#94a3b8;font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:6px}
+.rep-box{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.075);border-top:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px 16px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.rep-hero-card{background:linear-gradient(145deg,rgba(30,41,59,.7) 0%,rgba(15,23,42,.8) 100%);border:1px solid rgba(56,189,248,.24);border-top:1px solid rgba(56,189,248,.4);border-radius:16px;padding:18px 20px;box-shadow:0 8px 24px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.08)}
+.rep-hero-num{font-size:38px;font-weight:700;letter-spacing:-0.03em;line-height:1;color:#38bdf8;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;font-feature-settings:"tnum";font-variant-numeric:tabular-nums}
+.rep-hero-unit{font-size:16px;font-weight:500;color:#94a3b8;margin-left:6px;letter-spacing:-0.01em}
+.rep-hero-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#34d399;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.28);border-radius:9999px;padding:3px 9px;margin-top:6px}
+.rep-proof{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.08);border-left:3px solid #10b981;padding:10px 14px;border-radius:8px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;color:#cbd5e1;letter-spacing:-0.01em;margin-top:6px}
+.rep-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.rep-kv{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:10px 12px}
+.rep-kv-label{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:#64748b;margin-bottom:3px}
+.rep-kv-val{font-size:12px;font-weight:500;color:#e2e8f0;word-break:break-word}
+.rep-table{width:100%;border-collapse:separate;border-spacing:0;font-size:11.5px;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.rep-table th{background:rgba(255,255,255,.05);color:#94a3b8;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;padding:8px 12px;text-align:left;border-bottom:1px solid rgba(255,255,255,.08)}
+.rep-table td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.04);color:#cbd5e1;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11px}
+.rep-table tr:last-child td{border-bottom:none}
+.rep-table tr.active-row{background:rgba(56,189,248,.1)}
+.rep-table tr.active-row td{color:#38bdf8;font-weight:600}
+.rep-meter-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;font-size:11.5px}
+.rep-meter-track{width:100px;height:6px;background:rgba(255,255,255,.08);border-radius:9999px;overflow:hidden;position:relative}
+.rep-meter-fill{height:100%;border-radius:9999px;background:#38bdf8}
+.rep-foot{padding:14px 22px;background:rgba(255,255,255,.025);border-top:1px solid rgba(255,255,255,.08);display:flex;gap:10px;justify-content:flex-end;align-items:center}
+.rep-btn{border-radius:10px;padding:7px 15px;font-size:12px;font-weight:600;letter-spacing:-0.01em;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:all 120ms ease-out;outline:none}
+.rep-btn:active{transform:scale(0.96)}
+.rep-btn-primary{background:#0284c7;color:#fff;border:1px solid rgba(255,255,255,.2);box-shadow:0 2px 8px rgba(2,132,199,.4),inset 0 1px 0 rgba(255,255,255,.25)}
+.rep-btn-primary:hover{background:#0369a1;box-shadow:0 4px 12px rgba(2,132,199,.5),inset 0 1px 0 rgba(255,255,255,.35)}
+.rep-btn-secondary{background:rgba(255,255,255,.06);color:#e2e8f0;border:1px solid rgba(255,255,255,.12)}
+.rep-btn-secondary:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.2)}
+.rep-btn-ghost{background:transparent;color:#94a3b8;border:1px solid transparent}
+.rep-btn-ghost:hover{background:rgba(255,255,255,.05);color:#e2e8f0;border-color:rgba(255,255,255,.08)}
+@media (prefers-reduced-motion:reduce){.rep-scrim,.rep-card{animation:none!important}.rep-btn,.rep-close-btn{transition:none!important}.rep-btn:active,.rep-close-btn:active{transform:none!important}}
+@media (prefers-reduced-transparency:reduce){.rep-scrim{background:#04070e!important;backdrop-filter:none!important}.rep-card{background:#0f172a!important;backdrop-filter:none!important}}
 @media print{
-  body *{visibility:hidden}
-  .rep-card, .rep-card *{visibility:visible}
-  .rep-card{position:fixed;left:0;top:0;width:100%;max-width:100%;height:auto;border:none;box-shadow:none;background:#fff!important;color:#000!important}
-  .rep-head, .rep-sec-title, .rep-proof{color:#000!important;background:#f3f4f6!important;border-color:#ccc!important}
-  .rep-foot{display:none}
+  body *{visibility:hidden!important}
+  .rep-card,.rep-card *{visibility:visible!important}
+  .rep-card{position:fixed!important;left:0!important;top:0!important;width:100%!important;max-width:100%!important;height:auto!important;max-height:none!important;border:none!important;box-shadow:none!important;background:#fff!important;color:#000!important;border-radius:0!important}
+  .rep-head,.rep-sec-title,.rep-proof,.rep-box,.rep-hero-card,.rep-kv,.rep-table,.rep-table th,.rep-table td{color:#000!important;background:#fff!important;border-color:#d1d5db!important;box-shadow:none!important}
+  .rep-hero-num{color:#0284c7!important}
+  .rep-close-btn,.rep-foot{display:none!important}
 }
 </style>
 </head>
@@ -480,6 +518,14 @@ function ReportModal({ turn, scene, onClose }) {
     e.value && typeof e.value === 'object' && Object.keys(e.value).some(k => k.startsWith('+') || k.startsWith('-'))
   );
 
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   function downloadJson() {
     const blob = new Blob([JSON.stringify({ turn, scene }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -492,37 +538,53 @@ function ReportModal({ turn, scene, onClose }) {
     URL.revokeObjectURL(url);
   }
 
-  return h('div', { className: 'rep-scrim', onClick: e => e.target.className === 'rep-scrim' && onClose() },
+  return h('div', {
+    className: 'rep-scrim',
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-labelledby': 'rep-dialog-title',
+    onClick: e => { if (e.target.classList.contains('rep-scrim')) onClose(); }
+  },
     h('div', { className: 'rep-card' },
+      // Header
       h('div', { className: 'rep-head' },
         h('div', null,
-          h('b', { style: { fontSize: 13, color: '#f8fafc', letterSpacing: '0.5px' } },
-            'SATQUERY-AI · MEASUREMENT AUDIT CERTIFICATE'),
-          h('div', { style: { fontSize: 10, color: 'var(--faint)', fontFamily: 'var(--mono)', marginTop: 2 } },
-            'LEDGER AUDIT TRAIL · ZERO-HALLUCINATION DETERMINISTIC GUARANTEE')),
+          h('div', { className: 'rep-head-badge' }, 'Ledger Audit Trail · Deterministic Guarantee'),
+          h('div', { id: 'rep-dialog-title', className: 'rep-head-title' },
+            'SatQuery-AI · Measurement Audit Certificate'),
+          h('div', { className: 'rep-head-sub' },
+            'Cryptographic & array-kernel provenance · Tier ' + turn.tier + ' Engine')),
         h('button', {
-          style: { background: 'none', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 3, padding: '3px 9px', cursor: 'pointer' },
+          className: 'rep-close-btn',
+          'aria-label': 'Close certificate (Esc)',
           onClick: onClose
         }, '✕')),
-      
+
+      // Body
       h('div', { className: 'rep-body' },
         // Section 1: Executive Headline
         h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '1. Certified Measurement'),
           turn.headline
-            ? h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 12, background: '#0a101d', border: '1px solid #1e3a5f', padding: '12px 16px', borderRadius: 3 } },
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: 'var(--accent)', fontFamily: 'var(--mono)' } },
-                  fmt(turn.headline.value), h('span', { style: { fontSize: 14, marginLeft: 4, color: 'var(--dim)' } }, 'ha')),
-                h('div', null,
-                  h('div', { style: { fontWeight: 600, fontSize: 13, color: '#e2e8f0' } },
-                    (turn.headline.label || 'Target').toUpperCase() + ' EXTENT'),
-                  h('div', { style: { fontSize: 11, color: 'var(--good)' } }, '✓ Pixel-Space Invariant Verified · Zero Generative Interpolation')))
-            : h('div', { style: { fontStyle: 'italic', color: 'var(--dim)' } }, 'Methodological query — verified literature citations')),
+            ? h('div', { className: 'rep-hero-card' },
+                h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 } },
+                  h('div', { style: { display: 'flex', alignItems: 'baseline' } },
+                    h('span', { className: 'rep-hero-num' }, fmt(turn.headline.value)),
+                    h('span', { className: 'rep-hero-unit' }, 'ha')),
+                  h('div', { style: { textAlign: 'right' } },
+                    h('div', { style: { fontWeight: 700, fontSize: 13, color: '#f8fafc', letterSpacing: '0.04em' } },
+                      (turn.headline.label || 'Target').toUpperCase() + ' EXTENT'),
+                    h('div', { style: { fontSize: 11, color: '#94a3b8' } },
+                      'Deterministic ground-area calculation'))),
+                h('div', { className: 'rep-hero-badge' },
+                  '✓ Pixel-Space Invariant Verified · Zero Generative Interpolation'))
+            : h('div', { className: 'rep-box', style: { fontStyle: 'italic', color: '#94a3b8' } },
+                'Methodological query — verified peer-reviewed literature citations')),
 
         // Section 2: Invariant Statement
         h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '2. Mathematical & Spectral Invariant'),
-          h('div', { className: 'rep-proof', style: { color: '#a7f3d0', borderColor: 'var(--good)', background: '#04160e' } },
+          h('div', { className: 'rep-proof', style: { color: '#a7f3d0', borderColor: '#10b981', background: 'rgba(6,78,59,0.2)' } },
             'CERTIFICATION OF DETERMINISM: Every figure in this audit was derived strictly via deterministic array kernels ',
             'from authenticated multispectral raster bands. No language model or generative predictor was permitted to emit, ',
             'estimate, or adjust numerical values. Numeral validator status: PASS.')),
@@ -531,79 +593,96 @@ function ReportModal({ turn, scene, onClose }) {
         scene && h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '3. Spatial & Sensor Context'),
           h('div', { className: 'rep-grid' },
-            h('div', null,
-              h('div', { className: 'lbl' }, 'SCENE & SENSOR'),
-              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11 } }, scene.label + ' (' + scene.sensor + ')'),
-              h('div', { className: 'lbl' }, 'ACQUISITION DATE'),
-              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11 } }, scene.acquired),
-              h('div', { className: 'lbl' }, 'SPATIAL RESOLUTION'),
-              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11 } }, Math.sqrt(scene.pixel_area_m2) + ' m/px (ground sampling distance)')),
-            h('div', null,
-              h('div', { className: 'lbl' }, 'COORDINATE REFERENCE SYSTEM'),
-              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11 } }, scene.crs),
-              h('div', { className: 'lbl' }, 'GEOGRAPHIC EXTENT (WGS84)'),
-              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11 } }, (scene.bounds_wgs84 || []).map(n => n.toFixed(3)).join(', ')),
-              h('div', { className: 'lbl' }, 'AUDIT TRACKING ID'),
-              h('div', { style: { fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)' } }, turn.turn_id || '—')))),
+            h('div', { className: 'rep-kv' },
+              h('div', { className: 'rep-kv-label' }, 'SCENE & SENSOR'),
+              h('div', { className: 'rep-kv-val' }, scene.label + ' (' + scene.sensor + ')')),
+            h('div', { className: 'rep-kv' },
+              h('div', { className: 'rep-kv-label' }, 'ACQUISITION DATE'),
+              h('div', { className: 'rep-kv-val mono' }, scene.acquired)),
+            h('div', { className: 'rep-kv' },
+              h('div', { className: 'rep-kv-label' }, 'SPATIAL RESOLUTION'),
+              h('div', { className: 'rep-kv-val' }, Math.sqrt(scene.pixel_area_m2) + ' m/px (ground sampling distance)')),
+            h('div', { className: 'rep-kv' },
+              h('div', { className: 'rep-kv-label' }, 'COORDINATE REFERENCE SYSTEM'),
+              h('div', { className: 'rep-kv-val mono' }, scene.crs)),
+            h('div', { className: 'rep-kv' },
+              h('div', { className: 'rep-kv-label' }, 'GEOGRAPHIC EXTENT (WGS84)'),
+              h('div', { className: 'rep-kv-val mono' }, (scene.bounds_wgs84 || []).map(n => n.toFixed(3)).join(', '))),
+            h('div', { className: 'rep-kv' },
+              h('div', { className: 'rep-kv-label' }, 'AUDIT TRACKING ID'),
+              h('div', { className: 'rep-kv-val mono', style: { color: '#38bdf8' } }, turn.turn_id || '—')))),
 
         // Section 4: Narration & Query
         h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '4. User Query & Verified Narration'),
-          h('div', { style: { fontSize: 11.5, color: 'var(--dim)', marginBottom: 6 } },
-            h('b', { style: { color: '#f8fafc' } }, 'Query: '), '“' + (turn.query || '—') + '”'),
-          h('div', { style: { fontSize: 12, lineHeight: 1.5, background: 'var(--panel2)', padding: '10px 12px', borderRadius: 2, border: '1px solid var(--line)' } },
-            turn.narration),
-          h('div', { style: { fontSize: 10, color: 'var(--faint)', marginTop: 4 } },
-            'Language: ' + (turn.language_label || turn.language || 'English') + ' · Engine: Tier ' + turn.tier)),
+          h('div', { className: 'rep-box' },
+            h('div', { style: { fontSize: 12, color: '#94a3b8', marginBottom: 8 } },
+              h('span', { style: { fontWeight: 700, color: '#f8fafc' } }, 'Query: '), '“' + (turn.query || '—') + '”'),
+            h('div', { style: { fontSize: 12.5, lineHeight: 1.6, color: '#e2e8f0', background: 'rgba(0,0,0,0.25)', padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' } },
+              turn.narration),
+            h('div', { style: { fontSize: 10.5, color: '#64748b', marginTop: 8 } },
+              'Language: ' + (turn.language_label || turn.language || 'English') + ' · Engine: Tier ' + turn.tier))),
 
         // Section 5: Arithmetic Proofs from Ledger
         turn.evidence && turn.evidence.length > 0 && h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '5. Kernel Arithmetic Proofs (Ledger)'),
           turn.evidence.filter(e => e.arithmetic).map(e =>
-            h('div', { key: e.step_id, style: { marginBottom: 8 } },
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontFamily: 'var(--mono)', color: 'var(--faint)' } },
-                h('span', null, e.step_id + ' · ' + e.tool),
+            h('div', { key: e.step_id, className: 'rep-box', style: { marginBottom: 10 } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 11, fontFamily: 'var(--mono)', color: '#94a3b8', marginBottom: 4 } },
+                h('span', { style: { fontWeight: 600, color: '#38bdf8' } }, e.step_id + ' · ' + e.tool),
                 h('span', null, e.duration_ms + ' ms')),
               h('div', { className: 'rep-proof' }, e.arithmetic)))),
 
         // Section 6: Threshold Sensitivity
         sensitivityStep && sensitivityStep.value && h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '6. Threshold Stability & Sensitivity Analysis'),
-          h('table', null,
+          h('table', { className: 'rep-table' },
             h('thead', null, h('tr', null,
               h('th', null, 'Offset'), h('th', null, 'Threshold'),
               h('th', null, 'Pixel Count'), h('th', null, 'Calculated Area (ha)'))),
             h('tbody', null, Object.entries(sensitivityStep.value).map(([k, v]) =>
-              h('tr', { key: k },
-                h('td', { className: k === '+0.00' ? 'now' : '' }, k),
+              h('tr', { key: k, className: k === '+0.00' ? 'active-row' : '' },
+                h('td', null, k === '+0.00' ? k + ' (nominal)' : k),
                 h('td', null, v.threshold),
                 h('td', null, (v.pixels || 0).toLocaleString('en-IN')),
-                h('td', { className: k === '+0.00' ? 'now' : '' }, fmt(v.hectares))))))),
+                h('td', null, fmt(v.hectares))))))),
 
         // Section 7: Confidence Breakdown
         c && h('div', { className: 'rep-sec' },
           h('div', { className: 'rep-sec-title' }, '7. Confidence Metrics & Error Bounds'),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
-            h('div', { style: { fontSize: 13, fontWeight: 700, color: 'var(--accent)' } },
-              'Overall: ' + (c.score * 100).toFixed(1) + '% (' + c.band + ')')),
-          h('div', { className: 'rep-grid' },
-            Object.entries(c.components || {}).map(([k, v]) =>
-              h('div', { key: k, style: { fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--dim)' } },
-                k.replace(/_/g, ' ') + ': ' + (typeof v === 'number' ? (v * 100).toFixed(1) + '%' : v)))))),
+          h('div', { className: 'rep-box' },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
+              h('div', { style: { fontSize: 13, fontWeight: 700, color: '#38bdf8' } },
+                'Overall Score: ' + (c.score * 100).toFixed(1) + '%'),
+              h('div', { className: 'rep-head-badge', style: { borderColor: '#10b981', color: '#34d399', background: 'rgba(16,185,129,0.12)' } },
+                'Band: ' + (c.band || 'High').toUpperCase())),
+            h('div', { className: 'rep-grid' },
+              Object.entries(c.components || {}).map(([k, v]) => {
+                const pct = typeof v === 'number' ? Math.round(v * 100) : null;
+                return h('div', { key: k, className: 'rep-meter-row' },
+                  h('span', { style: { color: '#cbd5e1', fontSize: 11 } }, k.replace(/_/g, ' ')),
+                  pct !== null
+                    ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                        h('div', { className: 'rep-meter-track' },
+                          h('div', { className: 'rep-meter-fill', style: { width: `${pct}%`, background: pct > 80 ? '#38bdf8' : pct > 50 ? '#fbbf24' : '#f87171' } })),
+                        h('span', { style: { width: 34, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, color: '#94a3b8' } }, `${pct}%`))
+                    : h('span', { style: { fontFamily: 'var(--mono)', fontSize: 11, color: '#94a3b8' } }, v));
+              }))))),
 
+      // Footer
       h('div', { className: 'rep-foot' },
         h('button', {
-          style: { background: 'var(--panel2)', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 3, padding: '6px 12px', fontSize: 11, cursor: 'pointer' },
+          className: 'rep-btn rep-btn-ghost',
+          onClick: onClose
+        }, 'Close (Esc)'),
+        h('button', {
+          className: 'rep-btn rep-btn-secondary',
           onClick: downloadJson
         }, 'Export JSON Audit Ledger'),
         h('button', {
-          style: { background: 'var(--accent)', color: '#06131c', border: 0, borderRadius: 3, padding: '6px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer' },
+          className: 'rep-btn rep-btn-primary',
           onClick: () => window.print()
-        }, 'Print Certificate / PDF'),
-        h('button', {
-          style: { background: 'none', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 3, padding: '6px 12px', fontSize: 11, cursor: 'pointer' },
-          onClick: onClose
-        }, 'Close'))));
+        }, 'Print Certificate / PDF'))));
 }
 
 /* ---------- weather corroboration ---------- */
