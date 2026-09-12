@@ -3,7 +3,7 @@
     python -m uvicorn backend.app:app &
     python scripts/ui_check.py
 """
-import os, pathlib, sys
+import json, os, pathlib, sys
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -14,7 +14,6 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "docs" / "screens"
 # regenerating the scenes changes every area, and a hardcoded number here fails
 # later for a reason that has nothing to do with the UI it is supposed to test.
 def _truth():
-    import json
     t = json.loads((ROOT / "data/demo/truth.json").read_text(encoding="utf-8"))["scenes"]
     return t
 
@@ -42,7 +41,14 @@ def main():
         pg.wait_for_selector(".scene", timeout=15000)
 
         n = pg.locator(".scene").count()
-        if n != 7: fails.append(f"expected 7 scenes, got {n}")
+        # Read the count from the manifest rather than hardcoding it. This
+        # said 7 and broke the moment the eight real LISS-III scenes were
+        # registered -- the same reason the areas above are not hardcoded.
+        want = json.loads(
+            (ROOT / "data/demo/manifest.json").read_text(encoding="utf-8")
+        )["scene_count"]
+        if n != want:
+            fails.append(f"expected {want} scenes, got {n}")
         pg.screenshot(path=OUT / "01-initial.png")
 
         # Ask the flood question.

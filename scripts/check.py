@@ -11,7 +11,8 @@ MODULES = [
     "backend.kernel.measurement", "backend.kernel.executor",
     "backend.planner.intent", "backend.planner.language", "backend.planner.phrases",
     "backend.planner.places",
-    "backend.planner.tier_c", "backend.planner.validator",
+    "backend.planner.tier_b", "backend.planner.tier_c",
+    "backend.planner.validator",
     "backend.rag.retriever",
     "backend.pipeline", "backend.ledger", "backend.app",
 ]

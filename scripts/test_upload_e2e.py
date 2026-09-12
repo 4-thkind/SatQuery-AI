@@ -83,6 +83,47 @@ def main():
     assert bad_res.status_code == 400
     print("   Rejected non-geotiff with HTTP 400 as expected.")
 
+    print("\n8b. Testing PNG/RGB upload path...")
+    # _ingest_rgb_image is a separate branch from the GeoTIFF path: it
+    # synthesises a 4-band stack from RGB and labels the scene
+    # "Aerial / Optical Photo (RGB+NIR)". Untested, it leaked a permanent
+    # scene into the sidebar every time someone tried a PNG.
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (256, 256), (34, 90, 60)).save(buf, format="PNG")
+    buf.seek(0)
+    rgb = client.post(
+        "/api/v1/scenes/upload",
+        files={"file": ("aerial_test.png", buf, "image/png")},
+    )
+    assert rgb.status_code == 200, rgb.text
+    rgb_sid = rgb.json()["scene"]["id"]
+    print(f"   Registered {rgb_sid} from PNG")
+
+    rgb_listed = [s["id"] for s in client.get("/api/v1/scenes").json()["scenes"]]
+    assert rgb_sid in rgb_listed, "PNG scene not listed"
+
+    rgb_gone = client.delete(f"/api/v1/scenes/{rgb_sid}")
+    assert rgb_gone.status_code == 200, rgb_gone.text
+    rgb_after = [s["id"] for s in client.get("/api/v1/scenes").json()["scenes"]]
+    assert rgb_sid not in rgb_after, f"{rgb_sid} survived delete"
+    print(f"   Removed {rgb_sid}; PNG path leaves nothing behind.")
+
+    print("\n9. Cleaning up the uploaded test scene...")
+    # Without this the test leaves a permanent phantom scene in the
+    # sidebar: every run registered a "Custom Field Survey Flood" card
+    # that outlived it, because the manifest is durable state and nothing
+    # removed the row. remove_uploaded_scene drops the manifest entry, the
+    # .tif and both previews, so a run leaves the tree as it found it.
+    gone = client.delete(f"/api/v1/scenes/{sid}")
+    assert gone.status_code == 200, gone.text
+    listed = [s["id"] for s in client.get("/api/v1/scenes").json()["scenes"]]
+    assert sid not in listed, f"{sid} still listed after delete"
+    print(f"   Removed {sid}; sidebar back to {len(listed)} bundled scenes.")
+
     print("\n==========================================")
     print("ALL UPLOAD INTEGRATION TESTS PASSED (100%)")
     print("==========================================")
