@@ -189,3 +189,10 @@ data/uploads/uploaded_manifest.json
 # description of the software. README.md and data/README.md are
 # what a reader of this repository needs.
 HANDOFF.md
+
+# Internal codebase walkthrough for the team. Same reasoning as HANDOFF.md:
+# working notes, not a description of the shipped software.
+CODEBASE_GUIDE.md
+
+# Instructions for updating the round-one slide deck. Working notes.
+PPT_UPDATE_INSTRUCTIONS.md
