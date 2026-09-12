@@ -141,6 +141,36 @@ def _fmt(n: float) -> str:
     return f"{n:,.2f}"
 
 
+def _read_index(index: str, mean: float) -> str:
+    """Plain-language reading of an index mean. "" when the index is unknown.
+
+    Every index here has a documented zero crossing: positive means more of
+    the thing it detects, negative means less. Saying so turns a number into
+    an answer without adding a claim -- deliberately no land-cover label, no
+    position, no waterbody type, since the kernel measured none of those and
+    validator.validate_claims rejects them.
+    """
+    sign = "strongly " if abs(mean) >= 0.30 else ""
+    fam = {
+        "ndvi": ("vegetation response", "vegetation is sparse or absent"),
+        "evi": ("vegetation response", "vegetation is sparse or absent"),
+        "savi": ("vegetation response", "vegetation is sparse or absent"),
+        "ndwi": ("open-water response", "most of the scene is not open water"),
+        "mndwi": ("open-water response", "most of the scene is not open water"),
+        "ndbi": ("built-up/bare response", "little built-up or bare surface"),
+    }.get(index.lower())
+    if not fam:
+        return ""
+    positive, negative = fam
+    if mean > 0:
+        return f"a {sign}positive {positive} on average"
+    if mean < 0:
+        return f"on average negative, so {negative}"
+    # Exactly zero is neither: saying "negative" here would misreport the
+    # measurement over a sign convention's own crossing point.
+    return f"on average at the zero crossing for {positive}"
+
+
 def narrate(intent: str, verdict: FeasibilityVerdict, facts: dict,
             scene_label: str, conf: Confidence | None = None,
             lang: str = "en") -> str:
@@ -180,9 +210,25 @@ def narrate(intent: str, verdict: FeasibilityVerdict, facts: dict,
     elif facts.get("summaries"):
         # Per-index means for this scene. Numbers come from zonal_stats, so the
         # numeral guard accepts them and the text differs from scene to scene.
-        parts = ", ".join(f"{d['index']} {d['mean']:.3f}" for d in facts["summaries"])
-        lines.append(f"{scene_label} — scene-wide index means: {parts}. "
-                     f"Ranges and per-index detail are in the evidence ledger.")
+        #
+        # A bare list of index means ("NDVI 0.412, NDWI -0.155") is honest but
+        # answers nothing: it restates the ledger and leaves the reader to know
+        # what an NDVI of 0.412 implies. Each index has a documented physical
+        # sign convention, so the mean can be read out in words without
+        # asserting anything the kernel did not measure -- no location, no
+        # waterbody type, no land-cover class, all of which validate_claims
+        # blocks for good reason. Sign and magnitude only.
+        lines.append(f"{scene_label} — scene overview from "
+                     f"{len(facts['summaries'])} spectral "
+                     f"{'index' if len(facts['summaries']) == 1 else 'indices'}:")
+        for d in facts["summaries"]:
+            reading = _read_index(d["index"], d["mean"])
+            lines.append(f"{d['index']} averages {d['mean']:.3f} across the "
+                         f"scene (range {d['min']:.3f} to {d['max']:.3f})"
+                         + (f" — {reading}." if reading else "."))
+        lines.append("Per-pixel statistics for each index are in the evidence "
+                     "ledger. Ask for a specific class (water, vegetation, "
+                     "built-up) to get a measured area in hectares.")
     else:
         lines.append(f"{scene_label}: analysis completed.")
 
