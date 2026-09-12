@@ -407,7 +407,11 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             spread = (max(has) - min(has)) / base_ha
 
     conf = compose_confidence(verdict, verdict.cloud_fraction, spread, bs.scaled)
-    if conf.band == "Low" and verdict.verdict == "ANSWER":
+    # Both low bands degrade. "Low-Medium" is still a Low-range score -- it
+    # only records that a single component failed rather than all of them --
+    # so matching "Low" exactly here would silently stop degrading the verdict
+    # for exactly the scenes that most need the warning.
+    if conf.band.startswith("Low") and verdict.verdict == "ANSWER":
         verdict.verdict = "DEGRADE"
         base["verdict"] = "DEGRADE"
 

@@ -72,7 +72,10 @@ class EvidenceRecord(BaseModel):
 class Confidence(BaseModel):
     """Product of measurable components. Never a vibe."""
     score: float
-    band: Literal["High", "Medium", "Low"]
+    # "Low-Medium" marks a result whose score is in the Low range only because
+    # one component is unusable, while every other component is Medium-grade or
+    # better. Distinct from "Low", which means weak across the board.
+    band: Literal["High", "Medium", "Low-Medium", "Low"]
     components: dict[str, float]
     explanation: str = ""
 
