@@ -13,8 +13,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 # register_real.py runs AFTER make_manifest.py: that step rewrites
 # manifest.json from scratch off data/demo/*.tif, so real-scene entries
 # appended earlier would be silently erased.
+# crop_real.py runs BEFORE register_real.py: it writes the nodata-free
+# subsets that register_real then previews and puts in the manifest.
 STEPS = ["make_scenes.py", "make_previews.py", "make_manifest.py",
-         "register_real.py", "make_rainfall.py", "verify_scenes.py"]
+         "crop_real.py", "register_real.py",
+         "make_rainfall.py", "verify_scenes.py"]
 
 
 def main():

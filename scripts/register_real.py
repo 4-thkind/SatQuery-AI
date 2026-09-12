@@ -54,7 +54,15 @@ sys.path.insert(0, str(HERE))
 # point is to compare like with like.
 from make_previews import stretch, tone  # noqa: E402
 
-CONVERTED = ROOT / "data" / "real" / "converted"
+# Prefer the cropped scenes when scripts/crop_real.py has produced them: a
+# LISS-III swath leaves 30-36% of its raster as nodata, which renders as a
+# black wedge across a third of the frame. cropped/ holds the largest
+# nodata-free square of each scene. Falls back to converted/ so the pipeline
+# still works on a machine that has not run the crop step.
+_CROPPED = ROOT / "data" / "real" / "cropped"
+CONVERTED = (_CROPPED
+             if _CROPPED.exists() and any(_CROPPED.glob("liss3_*.tif"))
+             else ROOT / "data" / "real" / "converted")
 PREVIEWS = ROOT / "data" / "real" / "previews"
 MANIFEST = ROOT / "data" / "demo" / "manifest.json"
 
@@ -169,7 +177,7 @@ def entries() -> list[dict]:
                 # would assert clear sky we cannot vouch for.
                 "cloud_hint": 0.0,
                 "pair": PAIRS.get(sid),
-                "path": f"data/real/converted/{tif.name}",
+                "path": f"{CONVERTED.relative_to(ROOT).as_posix()}/{tif.name}",
                 "preview_false": f"data/real/previews/{sid}_false.png",
                 "preview_natural": f"data/real/previews/{sid}_natural.png",
                 "width": src.width,
