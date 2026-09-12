@@ -120,6 +120,8 @@ class AnswerPayload(BaseModel):
     # Retrieved method references (Phase 2, BM25 over a local corpus). Citations
     # only -- retrieval never contributes a measured value.
     citations: list[dict] = Field(default_factory=list)
+    # The deterministic kernel facts used to construct the answer and validate numerals.
+    facts: dict = Field(default_factory=dict)
     duration_ms: float = 0.0
 
 
@@ -128,3 +130,18 @@ class QueryRequest(BaseModel):
     scene_id: str
     scene_id_b: str | None = None      # second epoch for change detection
     session_id: str | None = None
+
+
+class TranslateRequest(BaseModel):
+    target_lang: str = "en"
+    target_language: str | None = None
+    intent: str = ""
+    verdict: str = "OK"
+    scene_label: str = ""
+    scene_id: str | None = None
+    facts: dict = Field(default_factory=dict)
+    confidence: Confidence | None = None
+    citations: list[dict] = Field(default_factory=list)
+    original_narration: str = ""
+    turn_id: str | None = None
+

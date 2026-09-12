@@ -20,10 +20,11 @@ from PIL import Image
 from . import ledger as ledger_mod
 from .core.uploader import ingest_upload
 from .pipeline import (DEMO, ROOT, answer, load_scene, manifest,
-                       scene_entry, scene_refs, register_uploaded_scene)
+                       scene_entry, scene_refs, register_uploaded_scene,
+                       re_narrate)
 from pydantic import BaseModel
 
-from .schemas import QueryRequest
+from .schemas import QueryRequest, TranslateRequest
 
 def _default_tier() -> str:
     """Tier B when the model stack is actually importable, else Tier C.
@@ -270,6 +271,35 @@ def query(req: QueryRequest):
     return out
 
 
+@app.post("/api/v1/translate")
+def translate(req: TranslateRequest):
+    """Deterministically translate an answer into another supported language."""
+    target_lang = req.target_language or req.target_lang
+    scene_label = req.scene_label
+    if not scene_label and req.scene_id:
+        try:
+            scene_label = scene_entry(req.scene_id).get("label", "")
+        except Exception:
+            pass
+    try:
+        narration, label = re_narrate(
+            intent=req.intent,
+            verdict=req.verdict,
+            facts=req.facts,
+            scene_label=scene_label,
+            conf=req.confidence,
+            target_lang=target_lang,
+            original_narration=req.original_narration,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "language": target_lang,
+        "language_label": label,
+        "narration": narration,
+    }
+
+
 class ClassifyRequest(BaseModel):
     question: str
     options: str | None = None
@@ -461,6 +491,29 @@ def _demo() -> None:
 
     ev = c.get(f"/api/v1/evidence/{r['turn_id']}").json()
     assert len(ev["evidence"]) == len(r["evidence"])
+
+    # Translation endpoint: translates an existing answer deterministically
+    tr_hi = c.post("/api/v1/translate", json={
+        "target_lang": "hi",
+        "intent": r["intent"],
+        "verdict": r["verdict"],
+        "scene_label": "Kosi Basin — Post-Monsoon Inundation",
+        "facts": r["facts"],
+        "confidence": r["confidence"],
+    }).json()
+    assert tr_hi["language"] == "hi"
+    assert "हेक्टेयर" in tr_hi["narration"] and "2,670.59" in tr_hi["narration"]
+
+    tr_bn = c.post("/api/v1/translate", json={
+        "target_lang": "bn",
+        "intent": r["intent"],
+        "verdict": r["verdict"],
+        "scene_label": "Kosi Basin — Post-Monsoon Inundation",
+        "facts": r["facts"],
+        "confidence": r["confidence"],
+    }).json()
+    assert tr_bn["language"] == "bn"
+    assert "হেক্টর" in tr_bn["narration"] and "2,670.59" in tr_bn["narration"]
 
     ab = c.post("/api/v1/query", json={"query": "burn scar area",
                                        "scene_id": "forest_burn"}).json()

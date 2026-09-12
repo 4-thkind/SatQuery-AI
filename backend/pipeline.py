@@ -492,8 +492,48 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
         evidence=ledger, layers=layers, plan=plan,
         corroboration=rainfall_context(scene_id),
         citations=citations,
+        facts=facts,
         duration_ms=round((time.perf_counter() - t0) * 1000, 2),
     )
+
+
+def re_narrate(intent: str, verdict: str, facts: dict, scene_label: str,
+               conf: Confidence | None, target_lang: str,
+               original_narration: str = "") -> tuple[str, str]:
+    """Re-narrate a verified result into `target_lang`. Returns (narration, language_label)."""
+    from .planner import phrases
+    from .planner.language import label as lang_name
+    from .planner.tier_c import narrate
+    from .planner.validator import validate_narration
+    from .schemas import FeasibilityVerdict
+
+    lang = target_lang.lower().strip()
+    if lang not in phrases.SUPPORTED:
+        raise ValueError(f"Language {lang!r} is not supported. Choose from {list(phrases.SUPPORTED)}.")
+
+    lbl = lang_name(lang)
+    if not facts:
+        if lang == "en":
+            return original_narration, lbl
+        return (f"[{lbl}]: {original_narration}\n\n"
+                f"[Note: Methodological corpus text is cited in English from published literature.]"), lbl
+
+    v_mode = "ANSWER" if verdict in ("OK", "ANSWER") else verdict
+    v_obj = FeasibilityVerdict(
+        verdict=v_mode, intent=intent, prior=1.0, reason=facts.get("absent", ""), recommendation=""
+    )
+    narration = narrate(intent, v_obj, facts, scene_label, conf, lang=lang)
+
+    # Validate numerals strictly against kernel facts
+    ok, bad = validate_narration(narration, facts, extra=[scene_label, conf.score if conf else 1.0])
+    if not ok:
+        headline_val = facts.get("hectares", facts.get("delta_ha"))
+        class_lbl = phrases.label_for(lang, facts.get("label", "the target class"))
+        narration = (f"[Narration withheld: translation contained {bad}, which the kernel did not compute. "
+                     f"Showing measured value only.]\n\n"
+                     f"{headline_val} hectares of {class_lbl}." if headline_val is not None else narration)
+
+    return narration, lbl
 
 
 def _recipe(intent: str):

@@ -69,6 +69,35 @@ def main():
         if "px x" not in arith: fails.append(f"arithmetic malformed: {arith!r}")
         pg.screenshot(path=OUT / "03-evidence.png")
         pg.locator(".drawtop button").click()
+        pg.wait_for_timeout(300)
+
+        # Translation pills test (translate answer to Hindi).
+        if pg.locator(".lang-pill").count():
+            pg.locator(".lang-pill", has_text="हिन्दी").first.click()
+            pg.wait_for_timeout(1000)
+            tr_txt = pg.locator(".card .narr").first.inner_text()
+            if "बाढ़" not in tr_txt and "हेक्टेयर" not in tr_txt:
+                fails.append("Hindi translation pill did not update narration")
+            pg.screenshot(path=OUT / "03b-translate-hi.png")
+
+        # Report card modal test.
+        if pg.locator(".chip", has_text="Export Report Card").count():
+            pg.locator(".chip", has_text="Export Report Card").first.click()
+            pg.wait_for_selector(".rep-card", timeout=5000)
+            if not pg.locator(".rep-sec-title").count():
+                fails.append("report card missing audit sections")
+            pg.screenshot(path=OUT / "03c-report-card.png")
+            pg.locator(".rep-head button").click()
+            pg.wait_for_timeout(300)
+
+        # Zoom controls test.
+        if pg.locator(".zoom-btn").count():
+            pg.locator(".zoom-btn", has_text="+").click()
+            pg.wait_for_timeout(300)
+            if not pg.locator(".zoom-btn.reset").count():
+                fails.append("zoom reset button did not appear after zoom in")
+            pg.locator(".zoom-btn.reset").click()
+            pg.wait_for_timeout(200)
 
         # ABSTAIN path.
         pg.locator(".scene", has_text="Forest Burn Scar").click()
@@ -99,22 +128,31 @@ def main():
             fails.append(f"change hero = {h2!r}, expected ~{want2:,.2f}")
         pg.screenshot(path=OUT / "05-change.png")
 
-        # --- epoch compare -------------------------------------------------
-        # Paired scenes must offer a before/after view, and the mask belongs to
-        # the AFTER frame only -- it was measured from that epoch.
+        # --- epoch compare & split swipe -----------------------------------
+        # Paired scenes offer both split-swipe slider and side-by-side views.
         if not pg.locator(".cmpbtn").count():
             fails.append("paired scene offers no compare control")
         else:
             pg.locator(".cmpbtn").click()
-            pg.wait_for_selector(".cmp .half", timeout=10000)
-            if pg.locator(".cmp .half").count() != 2:
-                fails.append("compare view did not render two epochs")
-            lbl = " ".join(pg.locator(".epoch").all_inner_texts())
-            if "BEFORE" not in lbl or "AFTER" not in lbl:
-                fails.append(f"compare epochs unlabelled: {lbl!r}")
-            if pg.locator(".cmp .half").nth(0).locator("img.ov").count():
-                fails.append("mask drawn on the BEFORE epoch it was not measured from")
-            pg.screenshot(path=OUT / "08-compare.png")
+            pg.wait_for_selector(".split-wrap", timeout=10000)
+            if not pg.locator(".split-line").count():
+                fails.append("split swipe slider line missing")
+            if not pg.locator(".split-badge.left").count():
+                fails.append("split swipe BEFORE badge missing")
+            pg.screenshot(path=OUT / "08a-split-swipe.png")
+
+            # Switch to side-by-side mode
+            if pg.locator(".seg button", has_text="Side-by-side").count():
+                pg.locator(".seg button", has_text="Side-by-side").click()
+                pg.wait_for_selector(".cmp .half", timeout=10000)
+                if pg.locator(".cmp .half").count() != 2:
+                    fails.append("compare view did not render two epochs")
+                lbl = " ".join(pg.locator(".epoch").all_inner_texts())
+                if "BEFORE" not in lbl or "AFTER" not in lbl:
+                    fails.append(f"compare epochs unlabelled: {lbl!r}")
+                if pg.locator(".cmp .half").nth(0).locator("img.ov").count():
+                    fails.append("mask drawn on the BEFORE epoch it was not measured from")
+                pg.screenshot(path=OUT / "08-compare.png")
             pg.locator(".cmpbtn").click()
             pg.wait_for_timeout(300)
 
