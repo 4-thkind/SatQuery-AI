@@ -12,6 +12,18 @@ from ..core.bandstack import BandStack
 from ..schemas import Confidence, FeasibilityVerdict, PlanStep, ToolPlan
 from ..kernel.spectral import INDEX_FOR_TARGET
 
+# Smallest value any confidence component contributes to the product. Keeps one
+# unusable component from zeroing a score the other four earned, without ever
+# lifting such a result out of the Low band (0.05^1 x 1.0^4 = 0.05, well under
+# the 0.40 Medium cut).
+COMPONENT_FLOOR = 0.05
+
+# Every surviving component must be at least this strong before a single failed
+# component is reported as Low-Medium rather than Low. Set at the Medium cut:
+# "one thing broke, everything else is at least Medium-grade" is exactly the
+# case the split exists to name.
+LOW_MEDIUM_MIN_OTHERS = 0.40
+
 # intent -> (index target, threshold direction, label)
 INTENT_RECIPE = {
     "flood_extent":      ("water", "gt", "flood water"),
@@ -125,15 +137,59 @@ def compose_confidence(v: FeasibilityVerdict, cloud_frac: float,
         "radiometry_penalty": 1.0 if scaled else 0.75,
         "grounding_quality": round(grounding, 3),
     }
+    # The score is a product, so a single zeroed component used to zero the
+    # whole thing. That reads as a broken widget rather than a measurement:
+    # a scene with clean radiometry, no cloud and a strong prior whose only
+    # weakness is an unstable threshold scored 0.000 -- identical to a scene
+    # that was bad at everything. The measurement itself succeeded in both
+    # cases, so collapsing them loses real information the other four
+    # components paid for.
+    #
+    # Each component is floored at COMPONENT_FLOOR before multiplying. The
+    # ranking is restored (good-scene-one-flaw 0.042 vs bad-everywhere 0.002)
+    # while staying far inside the Low band, so a broken component can never
+    # flatter a result into Medium. The unfloored value is what gets reported
+    # in `components`, so the ledger still shows the honest 0.0.
     score = 1.0
     for x in comp.values():
-        score *= x
+        score *= max(x, COMPONENT_FLOOR)
+
+    # Band from the score, then one correction the score alone cannot express.
+    #
+    # A product punishes a single failed component harder than broad
+    # mediocrity: one unusable component with four excellent ones scores 0.047,
+    # while five middling components score 0.074. Reporting both as plain "Low"
+    # tells the reader the wrong thing -- the first is a good scene with one
+    # identified defect, the second is weak everywhere.
+    #
+    # So when exactly one component is unusable and every other one is strong,
+    # the band says Low-Medium. It is still below Medium, and the explanation
+    # still names the broken component, but it no longer reads the same as a
+    # scene that failed on every axis.
     band = "High" if score >= 0.70 else "Medium" if score >= 0.40 else "Low"
+    if band == "Low":
+        failed = [k for k, x in comp.items() if x < COMPONENT_FLOOR]
+        others = [x for k, x in comp.items() if k not in failed]
+        if len(failed) == 1 and others and min(others) >= LOW_MEDIUM_MIN_OTHERS:
+            band = "Low-Medium"
     weakest = min(comp, key=comp.get)
+    # Name the floor when it applied, so a reader who multiplies the five
+    # reported components and gets a smaller number than the score knows why.
+    floored = (f" That component is unusable here, so the score is reported "
+               f"against a {COMPONENT_FLOOR} floor rather than collapsing to "
+               f"zero; treat the measurement as indicative only."
+               if comp[weakest] < COMPONENT_FLOOR else "")
+    # Round to 3 dp, but never display 0.000 for a result that actually ran.
+    # Several weak components multiply below a thousandth (0.000169 for a
+    # 98%-cloud uncalibrated scene), and rounding that to 0.000 puts the
+    # broken-widget reading straight back on screen. 0.001 is honest -- the
+    # measurement is near-worthless, which is what Low already says -- and it
+    # still reads as a number the system computed rather than a failure.
+    shown = max(round(score, 3), 0.001)
     return Confidence(
-        score=round(score, 3), band=band, components=comp,
+        score=shown, band=band, components=comp,
         explanation=(f"Product of five measured components; the limiting factor is "
-                     f"{weakest.replace('_', ' ')} at {comp[weakest]}."),
+                     f"{weakest.replace('_', ' ')} at {comp[weakest]}." + floored),
     )
 
 
