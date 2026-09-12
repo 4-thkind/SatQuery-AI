@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import pathlib
 
 import numpy as np
@@ -20,9 +21,29 @@ from . import ledger as ledger_mod
 from .core.uploader import ingest_upload
 from .pipeline import (DEMO, ROOT, answer, load_scene, manifest,
                        scene_entry, scene_refs, register_uploaded_scene)
+from pydantic import BaseModel
+
 from .schemas import QueryRequest
 
-TIER = os.environ.get("SATQUERY_TIER", "C").upper()
+def _default_tier() -> str:
+    """Tier B when the model stack is actually importable, else Tier C.
+
+    SATQUERY_TIER still wins when set. The default is derived rather than
+    hardcoded to "C" because the old behaviour was a footgun: launching the
+    virtualenv that contains torch, peft and faiss still reported Tier C, so
+    the header said "No model weights" on a machine holding 8 GB of them, and
+    the only way to get Tier B was to remember an environment variable.
+
+    Presence of the imports is the honest signal -- it is the same condition
+    tier_b._load() needs, so the tier now matches what the process can do.
+    """
+    import importlib.util as u
+    if all(u.find_spec(m) is not None for m in ("torch", "peft")):
+        return "B"
+    return "C"
+
+
+TIER = os.environ.get("SATQUERY_TIER", _default_tier()).upper()
 OUTBOUND_REQUESTS = 0        # never incremented: nothing in this app calls out
 
 app = FastAPI(title="SatQuery AI", version="0.1.0",
@@ -39,8 +60,94 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
 ledger_mod.connect().close()              # create the schema once at import
 
 
+def _prewarm_retrieval() -> None:
+    """Build the retriever now, before anything else touches torch.
+
+    The dense build succeeded in every isolated process and failed only inside
+    the served one, with:
+
+        NotImplementedError: Cannot copy out of meta tensor; no data!
+
+    which is what sentence-transformers raises when its weights materialise on
+    the meta device. Whatever installs that state, it is not present at import
+    time -- a clean process always builds dense -- so constructing the
+    singleton here gets a real index instead of a silent BM25 fallback.
+
+    Built inline on the main thread, deliberately. A daemon thread bound the
+    port faster but reproduced the exact failure this exists to avoid:
+
+        NotImplementedError: Cannot copy out of meta tensor; no data!
+
+    sentence-transformers materialises its weights on the meta device when it
+    loads off the main thread, so the "fast" version always fell back to BM25.
+    Blocking is the point -- the index has to exist before the first query, and
+    the 35 s it costs fits inside run.py's 60 s health gate.
+
+    Failure stays non-fatal: get() would simply build BM25 later, exactly as
+    before, and the reason is recorded on the instance either way.
+    """
+    try:
+        from .rag.retriever import get as _get
+        _get()
+    except Exception:                             # noqa: BLE001
+        pass
+
+
+_prewarm_retrieval()
+
+
 def _db():
     return ledger_mod.connect()
+
+
+def _tier_b_status() -> dict:
+    """Whether the fine-tuned model is actually loaded, and why not if not.
+
+    Reported rather than assumed: Tier B degrades to Tier C templates on any
+    failure, so without this a demo could be running templates while the
+    header claims a model. Never raises -- /health must answer even when the
+    model subsystem is broken.
+    """
+    try:
+        from .planner import tier_b
+        return tier_b.status()
+    except Exception as e:                        # noqa: BLE001
+        return {"tier_b_loaded": False, "load_error": f"{type(e).__name__}: {e}"}
+
+
+def _runtime_identity() -> dict:
+    """Which interpreter is actually serving, and can it see the dense stack.
+
+    Reported because the retrieval badge read "bm25" while a direct probe of
+    the same virtualenv reported "dense" -- meaning the serving process was
+    not the process being tested. Guessing which interpreter uvicorn ended up
+    on wasted several cycles; asking the server is one line.
+    """
+    import importlib.util as _u
+    return {
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "in_venv": sys.prefix != sys.base_prefix,
+        "faiss": _u.find_spec("faiss") is not None,
+        "sentence_transformers": _u.find_spec("sentence_transformers") is not None,
+        "torch": _u.find_spec("torch") is not None,
+    }
+
+
+def _retrieval_backend() -> str:
+    """"dense" (embeddings + FAISS) or "bm25" (no weights, no downloads).
+
+    Appends the reason when a dense build was attempted and failed, so a
+    surprising "bm25" is self-explaining rather than something to guess at
+    from outside the process.
+    """
+    try:
+        from .rag.retriever import get as _get
+        r = _get()
+        why = getattr(r, "fallback_reason", None)
+        return f"{r.backend} ({why})" if why else r.backend
+    except Exception:                             # noqa: BLE001
+        return "unavailable"
 
 
 @app.get("/api/v1/health")
@@ -48,12 +155,20 @@ def health():
     return {
         "status": "ok",
         "tier": TIER,
+        # Describes what actually loads. The previous strings named
+        # Qwen2.5-VL, which was the original plan; the model we fine-tuned and
+        # ship is EarthDial-4B-MS, and it runs at 8-bit because 4-bit NF4
+        # faults on sm_89 (see planner/tier_b.py).
         "tier_description": {
-            "A": "Qwen2.5-VL-7B planner + composer (4-bit)",
-            "B": "Qwen2.5-VL-3B planner + composer (4-bit)",
+            "A": "EarthDial-4B-MS + SatQuery LoRA, unquantised (needs >9 GB VRAM)",
+            "B": "EarthDial-4B-MS + SatQuery LoRA rank 128, 8-bit: base weights "
+                 "compose prose, the adapter answers yes-no and MCQ",
             "C": "rule-based planner + template narration, no model weights",
         }.get(TIER, "unknown"),
         "kernel": "identical across tiers -- measured numbers do not change",
+        "tier_b": _tier_b_status(),
+        "retrieval": _retrieval_backend(),
+        "runtime": _runtime_identity(),
         "scenes": len(scene_refs()),
         "outbound_requests": OUTBOUND_REQUESTS,
         "offline": True,
@@ -123,6 +238,55 @@ def query(req: QueryRequest):
     out["turn_id"] = turn_id
     return out
 
+
+class ClassifyRequest(BaseModel):
+    question: str
+    options: str | None = None
+
+
+@app.post("/api/v1/classify")
+def classify(req: ClassifyRequest):
+    """Answer a yes/no or multiple-choice question with the fine-tuned model.
+
+    This is the only route where the LoRA adapter is enabled, and it is
+    deliberately separate from /query: it returns a bare label and NO
+    measurement fields, so a model token can never be mistaken for a
+    kernel-computed number.
+
+    Accuracy on the BigEarthNet.txt bench split (n=4537, base model 9.7%):
+    60.1% overall, binary 69.9% against a 50.5% majority baseline, MCQ 48.4%
+    against 26.7%. Quoted here because an unqualified label invites more trust
+    than the number deserves.
+    """
+    from .planner import tier_b
+
+    label = tier_b.classify(req.question, req.options or "")
+    st = tier_b.status()
+    if not label:
+        raise HTTPException(
+            503,
+            "the fine-tuned model is unavailable: "
+            + (st.get("load_error") or st.get("gen_error") or "not loaded"),
+        )
+    return {
+        "question": req.question,
+        "options": req.options,
+        "label": label,
+        "model": "EarthDial-4B-MS + SatQuery LoRA (rank 128)",
+        "adapter_enabled": True,
+        "measured": False,
+        "accuracy": {
+            "split": "BigEarthNet.txt bench, n=4537",
+            "overall": 0.601,
+            "binary": 0.699,
+            "binary_majority_baseline": 0.505,
+            "mcq": 0.484,
+            "mcq_majority_baseline": 0.267,
+            "base_model_overall": 0.097,
+        },
+        "caveat": "a classification, not a measurement: no pixel was counted "
+                  "to produce it",
+    }
 
 @app.get("/api/v1/evidence/{turn_id}")
 def evidence(turn_id: str):
@@ -199,7 +363,10 @@ def mask_png(scene_id: str, intent: str = "flood_extent"):
 
     buf = io.BytesIO()
     Image.fromarray(rgba).save(buf, format="PNG")
-    headers = {"Cache-Control": "public, max-age=3600",
+    # Was max-age=3600. The mask is recomputed on every request and changes
+    # whenever a guard threshold or the kernel does, so an hour of browser
+    # staleness only ever hides a fix.
+    headers = {"Cache-Control": "no-cache, must-revalidate",
                "X-SatQuery-Mask": "empty" if reason else "ok"}
     if reason:
         headers["X-SatQuery-Reason"] = reason
@@ -208,10 +375,35 @@ def mask_png(scene_id: str, intent: str = "flood_extent"):
 
 # Static previews and the UI. The frontend is a single dependency-free HTML file:
 # no build step, nothing to npm install, and no network dependency at load.
-app.mount("/data", StaticFiles(directory=str(ROOT / "data")), name="data")
+class _Revalidating(StaticFiles):
+    """StaticFiles that forces a revalidation instead of a blind cache hit.
+
+    Starlette sends etag and last-modified but no Cache-Control, which leaves
+    the browser free to reuse a file from its heuristic cache without asking.
+    That is wrong for both things mounted here:
+
+      * index.html IS the application, so a stale copy shows old badges and
+        old behaviour against a current server -- indistinguishable from the
+        backend being broken, and the reason a UI change can look like it
+        never landed.
+      * the previews are regenerated in place by scripts/register_real.py, so
+        the path stays the same while the bytes change.
+
+    "no-cache" does not mean "do not store" -- it means revalidate before use.
+    The ETag still makes that a 304 on an unchanged file, so the cost is one
+    conditional request, not a re-download.
+    """
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
+app.mount("/data", _Revalidating(directory=str(ROOT / "data")), name="data")
 _ui = ROOT / "frontend"
 if (_ui / "index.html").exists():
-    app.mount("/", StaticFiles(directory=str(_ui), html=True), name="ui")
+    app.mount("/", _Revalidating(directory=str(_ui), html=True), name="ui")
 
 
 def _demo() -> None:
@@ -240,7 +432,15 @@ def _demo() -> None:
     kq = c.post("/api/v1/query", json={"query": "what id the meaning of otsu",
                                        "scene_id": "bihar_post_flood"}).json()
     assert kq["verdict"] == "ANSWER" and kq["intent"] == "method_explain" and kq["headline"] is None
-    assert "Otsu" in kq["narration"] and len(kq["citations"]) > 0
+    # Citations, not exact wording. At Tier C the top chunk is pasted verbatim
+    # so "Otsu" always appeared; at Tier B the model composes from the same
+    # chunk and may phrase it differently while still being correct and
+    # grounded. What must hold in both tiers is that the answer is backed by
+    # retrieved sources, so that is what gets asserted.
+    assert len(kq["citations"]) > 0, kq["citations"]
+    assert "otsu" in " ".join(
+        ct.get("title", "") + ct.get("text", "") for ct in kq["citations"]
+    ).lower(), [ct.get("title") for ct in kq["citations"]]
 
     png = c.get("/api/v1/scenes/bihar_post_flood/mask.png")
     assert png.status_code == 200 and png.content[:4] == b"\x89PNG"

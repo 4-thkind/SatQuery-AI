@@ -20,8 +20,10 @@ from .planner.intent import classify
 from .planner.language import detect as detect_language, label as language_label
 from .planner.places import coverage_message, detect as detect_place, is_covered
 from .rag.retriever import get as get_retriever
+from .planner import tier_b
 from .planner.tier_c import build_plan, compose_confidence, narrate
-from .planner.validator import validate_narration
+from .planner.validator import (validate_against_sources,
+                                validate_narration)
 from .schemas import AnswerPayload, Confidence, SceneRef
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -167,18 +169,59 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             source = top.get("source", "")
             text = top.get("text") or top.get("excerpt", "")
 
-            narration = f"{title}\n\n{text}"
-            if source:
-                narration += f"\n\nSource: {source}"
+            # Tier B composes an answer from the retrieved chunks. Any
+            # Tier B failure falls back to presenting the chunk itself,
+            # which is honest but reads as a document dump rather than an
+            # answer.
+            narration = ""
+            if tier.upper() in ("A", "B"):
+                narration = tier_b.answer_from_corpus(query, citations,
+                                                      lang=lang)
+            composed = bool(narration)
 
+            def _verbatim() -> str:
+                out = f"{title}\n\n{text}"
+                if source:
+                    out += f"\n\nSource: {source}"
+                return out
+
+            if composed:
+                # A model wrote this, so the numeral guard applies.
+                # Retrieved documents are NOT kernel facts: a number that
+                # lives only in a corpus chunk must never reach the user as
+                # if it had been measured. The fact set is empty because
+                # nothing was measured on this path -- it answers "how does
+                # this work", not "how much is there".
+                # Numerals only. The claim guard is deliberately skipped:
+                # this text explains a method rather than describing this
+                # scene, so words like "river" or "coast" are subject matter,
+                # not fabricated observation. Numbers are still fenced --
+                # a figure from a paper must not read as a measurement.
+                _nums, _bad = validate_against_sources(narration, citations)
+                if not _nums:
+                    narration, composed = _verbatim(), False
+            else:
+                narration = _verbatim()
+
+            # Confidence from the retrieval score rather than a constant.
+            # A flat 1.0 on any corpus hit is exactly the "vibe" that
+            # compose_confidence's own docstring forbids.
+            _rel = round(max(0.0, min(float(top.get("score", 0.0)), 1.0)), 3)
             conf = Confidence(
-                score=1.0,
-                band="High",
+                score=_rel,
+                band=("High" if _rel >= 0.70 else
+                      "Medium" if _rel >= 0.40 else "Low"),
                 components={
-                    "retrieval_relevance": float(top.get("score", 1.0)),
-                    "literature_grounding": 1.0,
+                    "retrieval_relevance": _rel,
+                    "composed_by_model": 1.0 if composed else 0.0,
                 },
-                explanation=f"Direct retrieval from verified literature citation: {source}." if source else "Direct retrieval from verified knowledge base.",
+                explanation=(
+                    f"Cosine similarity {_rel} against the local corpus; "
+                    + ("prose composed by the fine-tuned model and checked "
+                       "by the numeral guard" if composed
+                       else "chunk presented verbatim")
+                    + (f". Source: {source}." if source else ".")
+                ),
             )
             verdict.verdict = "ANSWER"
             return AnswerPayload(
@@ -341,11 +384,71 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             spread = (max(has) - min(has)) / base_ha
 
     conf = compose_confidence(verdict, verdict.cloud_fraction, spread, bs.scaled)
-    narration = narrate(intent, verdict, facts, scene_label, conf, lang=lang)
+
+    # Tier B lets the fine-tuned model phrase the measurement. The facts
+    # are the kernel's either way -- only the wording differs -- and the
+    # numeral guard below runs on both paths, so a model that invents a
+    # figure loses its narration instead of shipping it.
+    narration = ""
+    if tier.upper() in ("A", "B"):
+        narration = tier_b.narrate_measurement(intent, facts, scene_label,
+                                               lang=lang)
+        # Reject a reply that is technically non-empty but says nothing. The
+        # model returns the class label rather than a sentence more often than
+        # not on this path -- measured: "Flood_extent", then "Water bodies",
+        # then "Flood water" across three prompt revisions. Testing only for
+        # emptiness let those through, so the user saw a two-word label where
+        # a sentence belonged and Tier C never got a chance.
+        #
+        # A usable narration restates the measurement, so it has to carry at
+        # least one of the kernel's own numbers. That is a property of the
+        # output, not a guess about phrasing, which is why it is checked here
+        # rather than patched into the prompt a fourth time.
+        _unit_words = ("hectare", "hectares", "ha", "%", "percent",
+                       "square", "m2", "km")
+        if narration and not any(c.isdigit() for c in narration):
+            narration = ""
+        elif len(narration.split()) < 5:
+            narration = ""
+        elif not any(u in narration.lower() for u in _unit_words):
+            # A measured quantity without its unit is not a measurement.
+            # Probe output "The water in the image was measured at 2603.12."
+            # cleared both checks above: it is long enough and it carries the
+            # right number, but dropping "hectares" turns an area into a bare
+            # figure the reader has to guess at. Templates always carry units,
+            # so falling back loses nothing.
+            narration = ""
+    if not narration:
+        narration = narrate(intent, verdict, facts, scene_label, conf,
+                            lang=lang)
 
     # --- the guard: no numeral may appear that the kernel did not compute ---
+    # scene_label goes in the allowed set. Every template interpolates the
+    # scene name into the prose, so a name containing digits puts numerals in
+    # the narration that the kernel never computed -- and the guard withheld
+    # the whole sentence. It fired on all eight real scenes, whose labels
+    # carry an acquisition date ("Kosi Basin (LISS-III) - 2022-08-18"),
+    # rejecting ['08', '18,']. Uploaded scenes hit the same wall, since their
+    # label is derived from the filename.
+    #
+    # A scene's own name is not a measurement claim, so it belongs in `extra`
+    # alongside the ledger values rather than being stripped from labels.
+    #
+    # conf.components for the same reason. The confidence line names its
+    # weakest component and its value ("threshold stability at 0.453"), and
+    # only conf.score was allowed -- so a component value appearing in prose
+    # read as fabricated. Latent since Tier C: on synthetic scenes
+    # threshold_stability came out 1.0, and "1" is in ALWAYS_OK. Real imagery
+    # produces genuine intermediate values and the guard started firing.
+    #
+    # `spread` for the same reason, pre-emptively: it feeds
+    # compose_confidence and does not currently reach the prose, but it is a
+    # kernel-derived ratio of exactly the shape that caused the two failures
+    # above, so a future sensitivity phrase quoting it would withhold the
+    # whole narration.
     ok, bad = validate_narration(narration, facts, extra=[
-        e.value for e in ledger] + [conf.score, verdict.cloud_fraction])
+        e.value for e in ledger] + [conf.score, conf.components, spread,
+                                    verdict.cloud_fraction, scene_label])
     if not ok:
         narration = (f"[Narration withheld: it contained {bad}, which the kernel "
                      f"did not compute. Showing measured values only.]\n\n"

@@ -33,6 +33,20 @@ class Chunk:
     tokens: list[str] = field(default_factory=list)
 
 
+STOP = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "is", "are",
+    "for", "on", "with", "by", "as", "at", "from", "that", "this",
+    "it", "be", "was", "were", "how", "what", "why", "does", "do",
+}
+
+
+def tokenise(s: str) -> list[str]:
+    """Lowercase word tokens, stop words dropped. Used by the BM25
+    fallback; the dense path does not need it."""
+    return [w for w in re.findall(r"[a-z0-9]+", s.lower())
+            if w not in STOP and len(w) > 1]
+
+
 def load_chunks(path: pathlib.Path = CORPUS) -> list[Chunk]:
     """Parse the corpus into chunks, split on '## ' headings."""
     if not path.exists():
@@ -65,32 +79,109 @@ class Retriever:
     MODEL_NAME = "all-MiniLM-L6-v2"
     DEFAULT_MIN_SCORE = 0.30  # Cosine similarity threshold for relevance
 
-    def __init__(self, chunks: list[Chunk] | None = None, model_name: str = MODEL_NAME):
-        import faiss
-        from sentence_transformers import SentenceTransformer
-
+    def __init__(self, chunks: list[Chunk] | None = None,
+                 model_name: str = MODEL_NAME):
         self.chunks = chunks if chunks is not None else load_chunks()
         self.N = len(self.chunks)
-        self.model = SentenceTransformer(model_name)
+        self.model = None
+        self.index = None
+        self.backend = "bm25"
+        # Set when a dense build was attempted and failed; None when dense
+        # succeeded or was never possible. Surfaced at /api/v1/health.
+        self.fallback_reason: str | None = None
 
-        if self.N > 0:
-            # Build dense representations capturing title, tags, and document body
-            corpus_texts = [
-                f"{c.title}\nTags: {', '.join(c.tags)}\n\n{c.text}"
-                for c in self.chunks
-            ]
-            embeddings = self.model.encode(
-                corpus_texts,
-                normalize_embeddings=True,
-                convert_to_numpy=True,
-                show_progress_bar=False,
-            ).astype(np.float32)
+        # Dense retrieval when the stack is installed, BM25 when it is
+        # not. Tier C is documented as needing no model weights and no
+        # downloads, so the embedding model must not be an import-time
+        # requirement of the entire backend: without this fallback,
+        # backend.pipeline, backend.ledger and backend.app all fail to
+        # import on a machine that only wants templates.
+        faiss = None
+        SentenceTransformer = None
+        try:
+            import faiss
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            faiss = None
 
-            dim = embeddings.shape[1]
-            self.index = faiss.IndexFlatIP(dim)
-            self.index.add(embeddings)
-        else:
-            self.index = None
+        if faiss is not None and SentenceTransformer is not None and self.N:
+            try:
+                self.model = SentenceTransformer(model_name)
+                corpus_texts = [
+                    f"{c.title}\nTags: {', '.join(c.tags)}\n\n{c.text}"
+                    for c in self.chunks
+                ]
+                embeddings = self.model.encode(
+                    corpus_texts,
+                    normalize_embeddings=True,
+                    convert_to_numpy=True,
+                    show_progress_bar=False,
+                ).astype(np.float32)
+                self.index = faiss.IndexFlatIP(embeddings.shape[1])
+                self.index.add(embeddings)
+                self.backend = "dense"
+            except Exception as e:                # noqa: BLE001
+                # A cold cache with no network, or a corrupt download, must
+                # not take the app down: BM25 still answers.
+                #
+                # But record WHY. Swallowing this silently meant the badge read
+                # "bm25" while every dependency was present and importable,
+                # and diagnosing it from outside the process was impossible --
+                # several cycles went into theories about interpreters and
+                # caches when the answer was one exception away.
+                self.model = None
+                self.index = None
+                self.backend = "bm25"
+                self.fallback_reason = f"{type(e).__name__}: {e}"
+
+        if self.backend == "bm25":
+            self._build_bm25()
+
+    def _build_bm25(self) -> None:
+        """Classic BM25 over the same chunks. No weights, no network."""
+        import collections
+        import math
+
+        for c in self.chunks:
+            c.tokens = tokenise(c.title + " " + " ".join(c.tags)
+                                + " " + c.text)
+        df = collections.Counter()
+        for c in self.chunks:
+            for w in set(c.tokens):
+                df[w] += 1
+        self._avgdl = sum(len(c.tokens) for c in self.chunks) / max(self.N, 1)
+        self._idf = {w: math.log(1 + (self.N - d + 0.5) / (d + 0.5))
+                     for w, d in df.items()}
+
+    def _search_bm25(self, query: str, k: int) -> list[tuple[Chunk, float]]:
+        import collections
+
+        q = tokenise(query)
+        if not q:
+            return []
+        k1, b = 1.5, 0.75
+        scored: list[tuple[Chunk, float]] = []
+        for c in self.chunks:
+            tf = collections.Counter(c.tokens)
+            dl = len(c.tokens) or 1
+            head = set(tokenise(c.title + " " + " ".join(c.tags)))
+            s = 0.0
+            for w in q:
+                f = tf.get(w, 0)
+                if not f:
+                    continue
+                s += (self._idf.get(w, 0.0) * f * (k1 + 1)
+                      / (f + k1 * (1 - b + b * dl / self._avgdl)))
+                # A term in the title or tags is what the chunk is ABOUT; the
+                # same term buried in prose is a passing mention. Without this
+                # the longest chunk that name-drops a term outranks the chunk
+                # dedicated to it.
+                if w in head:
+                    s += 2.0 * self._idf.get(w, 0.0)
+            if s > 0:
+                scored.append((c, round(s, 3)))
+        scored.sort(key=lambda x: -x[1])
+        return scored[:k]
 
     def search(self, query: str, k: int = 3, min_score: float = DEFAULT_MIN_SCORE
                ) -> list[tuple[Chunk, float]]:
@@ -100,8 +191,11 @@ class Retriever:
         than the least-bad chunk. Citing an irrelevant source is worse than
         citing none, because it looks like grounding while providing none.
         """
-        if not query.strip() or not self.N or self.index is None:
+        if not query.strip() or not self.N:
             return []
+        if self.index is None:
+            return [(c, s) for c, s in self._search_bm25(query, k)
+                    if s >= 1.0]
 
         q_emb = self.model.encode(
             [query],
