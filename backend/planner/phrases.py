@@ -139,6 +139,15 @@ def label_for(lang: str, label: str) -> str:
     return LABELS.get(lang, {}).get(label, label)
 
 
+def fallback_note(code: str) -> str | None:
+    """Explicit notice when a detected script falls back to English."""
+    if code in SUPPORTED:
+        return None
+    from .language import label
+    lang_name = label(code)
+    return f"[Note: Verified reply templates for {lang_name} are in development; responding in English.]"
+
+
 def _demo() -> None:
     # Every language must define every key -- a missing one would KeyError at
     # request time rather than at import, which is the worst place to find it.

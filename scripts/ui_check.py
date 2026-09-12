@@ -69,6 +69,35 @@ def main():
         if "px x" not in arith: fails.append(f"arithmetic malformed: {arith!r}")
         pg.screenshot(path=OUT / "03-evidence.png")
         pg.locator(".drawtop button").click()
+        pg.wait_for_timeout(300)
+
+        # Translation pills test (translate answer to Hindi).
+        if pg.locator(".lang-pill").count():
+            pg.locator(".lang-pill", has_text="हिन्दी").first.click()
+            pg.wait_for_timeout(1000)
+            tr_txt = pg.locator(".card .narr").first.inner_text()
+            if "बाढ़" not in tr_txt and "हेक्टेयर" not in tr_txt:
+                fails.append("Hindi translation pill did not update narration")
+            pg.screenshot(path=OUT / "03b-translate-hi.png")
+
+        # Report card modal test.
+        if pg.locator(".chip", has_text="Export Report Card").count():
+            pg.locator(".chip", has_text="Export Report Card").first.click()
+            pg.wait_for_selector(".rep-card", timeout=5000)
+            if not pg.locator(".rep-sec-title").count():
+                fails.append("report card missing audit sections")
+            pg.screenshot(path=OUT / "03c-report-card.png")
+            pg.locator(".rep-head button").click()
+            pg.wait_for_timeout(300)
+
+        # Zoom controls test.
+        if pg.locator(".zoom-btn").count():
+            pg.locator(".zoom-btn", has_text="+").click()
+            pg.wait_for_timeout(300)
+            if not pg.locator(".zoom-btn.reset").count():
+                fails.append("zoom reset button did not appear after zoom in")
+            pg.locator(".zoom-btn.reset").click()
+            pg.wait_for_timeout(200)
 
         # ABSTAIN path.
         pg.locator(".scene", has_text="Forest Burn Scar").click()

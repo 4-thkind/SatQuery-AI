@@ -206,6 +206,10 @@ def narrate(intent: str, verdict: FeasibilityVerdict, facts: dict,
         lines.append(t["conf"].format(
             band=conf.band, score=f"{conf.score:.2f}", expl=conf.explanation))
 
+    note = phrases.fallback_note(lang)
+    if note:
+        lines.append(note)
+
     return "\n\n".join(lines)
 
 

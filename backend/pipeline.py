@@ -143,13 +143,32 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
         scene_id_b = entry["pair"]
         bs_b = load_scene(scene_id_b)
 
+    if is_change and bs_b is not None:
+        entry_b = scene_entry(scene_id_b)
+        date_a = entry.get("acquired")
+        date_b = entry_b.get("acquired")
+        if date_a and date_b and date_a < date_b:
+            # scene_id is older than scene_id_b.
+            # Normalise so that scene_id (Epoch A) is ALWAYS the later scene,
+            # and scene_id_b (Epoch B) is ALWAYS the earlier baseline scene.
+            # This ensures A AND NOT B computes new inundation/growth chronologically,
+            # and narration reports "rising/changing from B (earlier) to A (later)".
+            scene_id, scene_id_b = scene_id_b, scene_id
+            bs, bs_b = bs_b, bs
+            entry = entry_b
+
     verdict = assess(bs, intent, has_second_scene=bs_b is not None)
     scene_label = entry["label"]
+
+    from .planner.phrases import SUPPORTED as SUPPORTED_LANGS
+    lang_badge = language_label(lang)
+    if lang not in SUPPORTED_LANGS:
+        lang_badge = f"{lang_badge} (English fallback)"
 
     base = dict(query=query, intent=intent, verdict=verdict.verdict,
                 scene_ids=[scene_id] + ([scene_id_b] if scene_id_b else []),
                 feasibility=verdict, tier=tier,
-                language=lang, language_label=language_label(lang))
+                language=lang, language_label=lang_badge)
 
     # Dynamic RAG check for conceptual/methodology questions falling through to scene_describe
     if intent == "scene_describe":
@@ -384,10 +403,13 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             from .kernel.measurement import SENSITIVITY_OFFSETS
             facts["sens_low_ha"], facts["sens_high_ha"] = min(has), max(has)
             facts["sens_width"] = max(SENSITIVITY_OFFSETS)
-            base_ha = facts.get("hectares") or facts.get("delta_ha") or 1.0
+            base_ha = max(facts.get("delta_ha") or 0.0, facts.get("hectares") or 0.0, facts.get("a_ha") or 0.0, 1.0)
             spread = (max(has) - min(has)) / base_ha
 
     conf = compose_confidence(verdict, verdict.cloud_fraction, spread, bs.scaled)
+    if conf.band == "Low" and verdict.verdict == "ANSWER":
+        verdict.verdict = "DEGRADE"
+        base["verdict"] = "DEGRADE"
 
     # Tier B lets the fine-tuned model phrase the measurement. The facts
     # are the kernel's either way -- only the wording differs -- and the
@@ -470,8 +492,48 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
         evidence=ledger, layers=layers, plan=plan,
         corroboration=rainfall_context(scene_id),
         citations=citations,
+        facts=facts,
         duration_ms=round((time.perf_counter() - t0) * 1000, 2),
     )
+
+
+def re_narrate(intent: str, verdict: str, facts: dict, scene_label: str,
+               conf: Confidence | None, target_lang: str,
+               original_narration: str = "") -> tuple[str, str]:
+    """Re-narrate a verified result into `target_lang`. Returns (narration, language_label)."""
+    from .planner import phrases
+    from .planner.language import label as lang_name
+    from .planner.tier_c import narrate
+    from .planner.validator import validate_narration
+    from .schemas import FeasibilityVerdict
+
+    lang = target_lang.lower().strip()
+    if lang not in phrases.SUPPORTED:
+        raise ValueError(f"Language {lang!r} is not supported. Choose from {list(phrases.SUPPORTED)}.")
+
+    lbl = lang_name(lang)
+    if not facts:
+        if lang == "en":
+            return original_narration, lbl
+        return (f"[{lbl}]: {original_narration}\n\n"
+                f"[Note: Methodological corpus text is cited in English from published literature.]"), lbl
+
+    v_mode = "ANSWER" if verdict in ("OK", "ANSWER") else verdict
+    v_obj = FeasibilityVerdict(
+        verdict=v_mode, intent=intent, prior=1.0, reason=facts.get("absent", ""), recommendation=""
+    )
+    narration = narrate(intent, v_obj, facts, scene_label, conf, lang=lang)
+
+    # Validate numerals strictly against kernel facts
+    ok, bad = validate_narration(narration, facts, extra=[scene_label, conf.score if conf else 1.0])
+    if not ok:
+        headline_val = facts.get("hectares", facts.get("delta_ha"))
+        class_lbl = phrases.label_for(lang, facts.get("label", "the target class"))
+        narration = (f"[Narration withheld: translation contained {bad}, which the kernel did not compute. "
+                     f"Showing measured value only.]\n\n"
+                     f"{headline_val} hectares of {class_lbl}." if headline_val is not None else narration)
+
+    return narration, lbl
 
 
 def _recipe(intent: str):
@@ -496,6 +558,13 @@ def _demo() -> None:
     assert len(c.scene_ids) == 2, c.scene_ids
     wd = truth["bihar_post_flood"]["delta_vs_pre_ha"]
     assert abs(c.headline["value"] - wd) / wd < 0.03, (c.headline, wd)
+
+    # 2b. Reversed scene order in change detection must auto-sort chronologically.
+    c_rev = answer("how much more water than before?", "bihar_pre_flood", "bihar_post_flood")
+    assert abs(c_rev.headline["value"] - wd) / wd < 0.03, (c_rev.headline, wd)
+    assert c_rev.verdict == "ANSWER"
+    assert "2024-05-18" in c_rev.narration and "2024-08-27" in c_rev.narration
+    assert "rising to" in c_rev.narration
 
     # 3. ABSTAIN on missing bands, with no number invented.
     b = answer("show me the burn scar", "forest_burn")

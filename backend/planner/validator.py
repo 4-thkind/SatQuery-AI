@@ -14,7 +14,9 @@ import re
 NUMERAL = re.compile(r"\d[\d,]*\.?\d*")
 
 # Numbers that are always allowed: they are structural, not measurements.
-ALWAYS_OK = {"0", "1", "2", "3", "4", "5", "10", "100", "1000", "10000"}
+# Round numbers like 10, 100, 1000, 10000 were removed because an LLM can
+# fabricate approximation figures (e.g. "nearly 1000 families", "10000 people").
+ALWAYS_OK = {"0", "1", "2", "3", "4", "5"}
 
 # Four-digit years, 1900-2099. A citation date is not a measured quantity, and
 # blocking it was silently gutting the Tier B corpus path: 48 of the 85 corpus
@@ -53,8 +55,11 @@ def collect_facts(facts: dict, extra: list = ()) -> set[str]:
             out.add(_canon(f"{f:.2f}"))
             out.add(_canon(f"{f:.1f}"))
             out.add(_canon(f"{round(f):d}"))
-            out.add(_canon(f"{f * 100:.1f}"))     # fraction rendered as percent
-            out.add(_canon(f"{round(f * 100):d}"))
+            # Only apply * 100 to true fractions/ratios (0.0 to 1.0), not arbitrary
+            # negative thresholds (e.g. -0.2253) which would silently legitimize "23".
+            if 0.0 <= f <= 1.0:
+                out.add(_canon(f"{f * 100:.1f}"))     # fraction rendered as percent
+                out.add(_canon(f"{round(f * 100):d}"))
         elif isinstance(v, str):
             for m in NUMERAL.findall(v):
                 out.add(_canon(m))
@@ -198,6 +203,19 @@ def _demo() -> None:
     ok, bad = validate_narration(
         "2,603.12 hectares were flooded, affecting 47,000 people.", facts)
     assert not ok and any(_canon(b) == "47000" for b in bad), bad
+
+    # Round-number approximation hallucinations must be caught (no ALWAYS_OK leak)
+    ok_1000, bad_1000 = validate_narration(
+        "About 2,603 hectares were flooded, displacing nearly 1000 families.", facts)
+    assert not ok_1000 and any(_canon(b) == "1000" for b in bad_1000), bad_1000
+
+    ok_10000, bad_10000 = validate_narration(
+        "About 2,603 hectares were flooded, and roughly 10000 people were affected.", facts)
+    assert not ok_10000 and any(_canon(b) == "10000" for b in bad_10000), bad_10000
+
+    # Negative threshold must not whitelist "23" via blind *100
+    ok_23, bad_23 = validate_narration("Found 23 distinct zones.", facts)
+    assert not ok_23 and any(_canon(b) == "23" for b in bad_23), bad_23
 
     # A number that merely looks plausible is still caught.
     ok, bad = validate_narration("The area is 2,700.00 hectares.", facts)

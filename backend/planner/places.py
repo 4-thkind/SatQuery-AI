@@ -17,6 +17,7 @@ the offline guarantee the whole system is built on.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 # Districts and states we recognise by name, in the scripts people type them in.
@@ -32,7 +33,7 @@ PLACE_ALIASES = {
     "gujarat": ["gujarat", "गुजरात", "ગુજરાત"],
     "maharashtra": ["maharashtra", "महाराष्ट्र"],
     "tamil nadu": ["tamil nadu", "tamilnadu", "तमिलनाडु", "தமிழ்நாடு"],
-    "west bengal": ["west bengal", "बंगाल", "পশ্চিমবঙ্গ", "বাংলা"],
+    "west bengal": ["west bengal", "पश्चिम बंगाल", "পশ্চিমবঙ্গ"],
     "uttarakhand": ["uttarakhand", "उत्तराखंड"],
     "delhi": ["delhi", "दिल्ली", "ਦਿੱਲੀ"],
     "mumbai": ["mumbai", "bombay", "मुंबई"],
@@ -59,18 +60,33 @@ DISPLAY = {
 }
 
 
+def detect_all(query: str) -> list[str]:
+    """Return all canonical places named in `query`."""
+    q = f" {unicodedata.normalize('NFKC', query.lower())} "
+    found = []
+    for canon, aliases in PLACE_ALIASES.items():
+        for a in aliases:
+            if re.search(rf"(?<![a-zA-Z0-9]){re.escape(a)}(?![a-zA-Z0-9])", q):
+                if canon not in found:
+                    found.append(canon)
+                break
+    return found
+
+
 def detect(query: str) -> str | None:
     """Return the canonical place named in `query`, or None if none is named.
 
-    Longest alias wins, so "west bengal" is not swallowed by "bengal".
+    Prioritises uncovered places so that compound queries mentioning an uncovered
+    place (e.g. "Bihar and Assam") are caught and refused rather than answering from
+    whichever scene happens to be loaded.
     """
-    q = f" {unicodedata.normalize('NFKC', query.lower())} "
-    best: tuple[int, str] | None = None
-    for canon, aliases in PLACE_ALIASES.items():
-        for a in aliases:
-            if a in q and (best is None or len(a) > best[0]):
-                best = (len(a), canon)
-    return best[1] if best else None
+    places = detect_all(query)
+    if not places:
+        return None
+    uncovered = [p for p in places if p not in COVERED]
+    if uncovered:
+        return uncovered[0]
+    return places[0]
 
 
 def is_covered(place: str | None) -> bool:
@@ -97,6 +113,13 @@ def _demo() -> None:
     assert detect("how much water here") is None
     # Longest alias must win, or "west bengal" resolves to plain "bengal".
     assert detect("flooding in west bengal") == "west bengal"
+
+    # Language collision: "বাংলা" (Bengali language) must not trigger West Bengal
+    assert detect("please answer in Bengali (বাংলায়)") is None
+    assert detect("বাংলা ভাষায় উত্তর দাও") is None
+
+    # Compound query: naming a covered and an uncovered place must catch the uncovered place
+    assert detect("Compare the flooding in Bihar and Assam this monsoon") == "assam"
 
     assert is_covered("supaul") and is_covered(None)
     assert not is_covered("assam")
