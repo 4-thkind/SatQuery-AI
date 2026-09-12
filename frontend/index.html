@@ -450,7 +450,7 @@ function Answer({ t, onEvidence, onExport }) {
     h('div', { style: { display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' } },
       t.evidence && t.evidence.length > 0 &&
       h('button', { className: 'chip', onClick: () => onEvidence(t) },
-        '🔍 Evidence · ' + t.evidence.length + ' steps'),
+        'Evidence · ' + t.evidence.length + ' steps'),
       !ab && onExport && h('button', {
         className: 'chip',
         style: { borderColor: '#3b82f6', color: '#93c5fd' },
@@ -460,7 +460,7 @@ function Answer({ t, onEvidence, onExport }) {
           language: activeLang,
           language_label: (SUPPORTED_LANGS.find(l => l.code === activeLang) || {}).label || activeLang
         })
-      }, '📄 Export Report Card'),
+      }, 'Export Report Card'),
       t.turn_id && h('span', {
         className: 'chip',
         style: { background: '#111a24', borderColor: 'var(--line)', color: 'var(--faint)' }
@@ -497,7 +497,7 @@ function ReportModal({ turn, scene, onClose }) {
       h('div', { className: 'rep-head' },
         h('div', null,
           h('b', { style: { fontSize: 13, color: '#f8fafc', letterSpacing: '0.5px' } },
-            '🛰️ SATQUERY-AI · MEASUREMENT AUDIT CERTIFICATE'),
+            'SATQUERY-AI · MEASUREMENT AUDIT CERTIFICATE'),
           h('div', { style: { fontSize: 10, color: 'var(--faint)', fontFamily: 'var(--mono)', marginTop: 2 } },
             'LEDGER AUDIT TRAIL · ZERO-HALLUCINATION DETERMINISTIC GUARANTEE')),
         h('button', {
@@ -595,11 +595,11 @@ function ReportModal({ turn, scene, onClose }) {
         h('button', {
           style: { background: 'var(--panel2)', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 3, padding: '6px 12px', fontSize: 11, cursor: 'pointer' },
           onClick: downloadJson
-        }, '💾 Export JSON Audit Ledger'),
+        }, 'Export JSON Audit Ledger'),
         h('button', {
           style: { background: 'var(--accent)', color: '#06131c', border: 0, borderRadius: 3, padding: '6px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer' },
           onClick: () => window.print()
-        }, '🖨 Print Certificate / PDF'),
+        }, 'Print Certificate / PDF'),
         h('button', {
           style: { background: 'none', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 3, padding: '6px 12px', fontSize: 11, cursor: 'pointer' },
           onClick: onClose
@@ -1045,12 +1045,12 @@ function App() {
 
     /* capability tiles */
     h('div', { className: 'tiles' },
-      [['▦', 'True Pixel', 'Computed from actual pixels, not predicted.'],
-      ['🔗', 'Evidence-Linked', 'Every value carries an Evidence ID and its arithmetic.'],
-      ['◈', 'Spatial Proof', 'Mask overlay shown for visual verification.'],
-      ['🔒', 'Sovereign & Offline', 'Runs air-gapped. Zero outbound requests.']]
-        .map(([ic, t, d]) => h('div', { className: 'tile', key: t },
-          h('b', null, ic + '  ' + t), h('span', null, d)))),
+      [['True Pixel', 'Computed from actual pixels, not predicted.'],
+      ['Evidence-Linked', 'Every value carries an Evidence ID and its arithmetic.'],
+      ['Spatial Proof', 'Mask overlay shown for visual verification.'],
+      ['Sovereign & Offline', 'Runs air-gapped. Zero outbound requests.']]
+        .map(([t, d]) => h('div', { className: 'tile', key: t },
+          h('b', null, t), h('span', null, d)))),
 
     h(Drawer, { turn: drawer, onClose: () => setDrawer(null) }),
     reportTurn && h(ReportModal, { turn: reportTurn, scene, onClose: () => setReportTurn(null) }));
