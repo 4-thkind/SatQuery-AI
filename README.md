@@ -9,7 +9,7 @@ Sensing Image Analysis through Text Queries. ISRO / Dept. of Space. Team KERNEL.
 ## Run it
 
 ```bash
-pip install rasterio numpy pillow scikit-image pydantic fastapi "uvicorn[standard]"
+pip install rasterio numpy pillow scikit-image pydantic fastapi "uvicorn[standard]" httpx
 python run.py
 ```
 

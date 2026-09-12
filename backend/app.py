@@ -49,7 +49,13 @@ OUTBOUND_REQUESTS = 0        # never incremented: nothing in this app calls out
 app = FastAPI(title="SatQuery AI", version="0.1.0",
               description="Interactive vision-language assistant for multimodal "
                           "remote sensing image analysis. SIH26167.")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+_cors_env = os.environ.get("SATQUERY_CORS_ORIGINS")
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else [
+    "http://127.0.0.1:8000", "http://localhost:8000",
+    "http://127.0.0.1:3000", "http://localhost:3000",
+    "http://127.0.0.1:8080", "http://localhost:8080",
+]
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_methods=["*"],
                    allow_headers=["*"])
 
 # FastAPI runs sync endpoints in a threadpool and SQLite connections are bound to
@@ -420,6 +426,12 @@ class _Revalidating(StaticFiles):
     """
 
     async def get_response(self, path, scope):
+        # Exclude sensitive data files from static exposure (e.g. database files,
+        # ground truth key, raw rasters, tabular data). The UI only consumes image previews.
+        disallowed_exts = {".db", ".sqlite", ".sqlite3", ".json", ".csv", ".tif", ".tiff"}
+        if any(path.lower().endswith(ext) for ext in disallowed_exts) or "truth" in path.lower():
+            from starlette.responses import Response
+            return Response("Not Found", status_code=404)
         resp = await super().get_response(path, scope)
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
         return resp
@@ -469,6 +481,12 @@ def _demo() -> None:
 
     png = c.get("/api/v1/scenes/bihar_post_flood/mask.png")
     assert png.status_code == 200 and png.content[:4] == b"\x89PNG"
+
+    # Static data protection: database, ground truth, and raw data files must be 404
+    assert c.get("/data/ledger.db").status_code == 404
+    assert c.get("/data/demo/truth.json").status_code == 404
+    # Image previews must remain accessible to the frontend
+    assert c.get("/data/demo/previews/bihar_post_flood_natural.png").status_code == 200
 
     assert c.get("/api/v1/scenes/nope").status_code == 404
     assert c.post("/api/v1/query", json={"query": "x", "scene_id": "nope"}).status_code == 404

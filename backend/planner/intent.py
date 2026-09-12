@@ -109,6 +109,14 @@ def _norm(q: str) -> str:
     return re.sub(r"\s+", " ", f" {q} ")
 
 
+def _term_matches(t: str, q: str) -> bool:
+    # Ensure word boundaries for alphanumeric characters so that e.g.
+    # "count" does not match inside "discount" or "countryside", and
+    # "aag" does not match inside "aage".
+    # Non-alphanumeric lookaround works across both ASCII and Indic scripts.
+    return bool(re.search(rf"(?<![a-zA-Z0-9]){re.escape(t)}(?![a-zA-Z0-9])", q))
+
+
 def classify(query: str) -> tuple[str, bool, dict]:
     """Return (intent, is_change_query, scores).
 
@@ -118,13 +126,13 @@ def classify(query: str) -> tuple[str, bool, dict]:
     q = _norm(query)
     scores: dict[str, int] = {}
     for intent, terms in INTENT_LEXICON.items():
-        hits = sum(1 for t in terms if t in q)
+        hits = sum(1 for t in terms if _term_matches(t, q))
         if hits:
             scores[intent] = hits
 
-    is_change = any(t in q for t in CHANGE_MARKERS)
-    is_measure = any(m in q for m in MEASURE_MARKERS)
-    is_explain = any(e in q for e in EXPLAIN_MARKERS)
+    is_change = any(_term_matches(t, q) for t in CHANGE_MARKERS)
+    is_measure = any(_term_matches(m, q) for m in MEASURE_MARKERS)
+    is_explain = any(_term_matches(e, q) for e in EXPLAIN_MARKERS)
 
     # Explanatory / conceptual query: definition, meaning, or algorithm without scene measurement
     if (is_explain or "method_explain" in scores) and not is_measure:
@@ -174,6 +182,17 @@ def _demo() -> None:
         got, change, scores = classify(q)
         assert got == want_intent, f"{q!r} -> {got}, want {want_intent} ({scores})"
         assert change == want_change, f"{q!r} change={change}, want {want_change}"
+
+    # Word boundary guard: substrings must not trigger false intents
+    disc_intent, _, disc_scores = classify("What is the current discount on satellite imagery licensing?")
+    assert disc_intent != "object_count" and "object_count" not in disc_scores, f"discount matched: {disc_scores}"
+
+    aage_intent, _, aage_scores = classify("Aage kya dikhna chahiye is scene mein?")
+    assert aage_intent != "burn_severity" and "burn_severity" not in aage_scores, f"aage matched: {aage_scores}"
+
+    count_intent, _, count_scores = classify("Tell me about the countryside around this village")
+    assert count_intent != "object_count" and "object_count" not in count_scores, f"countryside matched: {count_scores}"
+
     print(f"intent: ok  {len(cases)} queries incl. Hindi and Hinglish")
 
 

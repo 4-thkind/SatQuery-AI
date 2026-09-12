@@ -143,13 +143,32 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
         scene_id_b = entry["pair"]
         bs_b = load_scene(scene_id_b)
 
+    if is_change and bs_b is not None:
+        entry_b = scene_entry(scene_id_b)
+        date_a = entry.get("acquired")
+        date_b = entry_b.get("acquired")
+        if date_a and date_b and date_a < date_b:
+            # scene_id is older than scene_id_b.
+            # Normalise so that scene_id (Epoch A) is ALWAYS the later scene,
+            # and scene_id_b (Epoch B) is ALWAYS the earlier baseline scene.
+            # This ensures A AND NOT B computes new inundation/growth chronologically,
+            # and narration reports "rising/changing from B (earlier) to A (later)".
+            scene_id, scene_id_b = scene_id_b, scene_id
+            bs, bs_b = bs_b, bs
+            entry = entry_b
+
     verdict = assess(bs, intent, has_second_scene=bs_b is not None)
     scene_label = entry["label"]
+
+    from .planner.phrases import SUPPORTED as SUPPORTED_LANGS
+    lang_badge = language_label(lang)
+    if lang not in SUPPORTED_LANGS:
+        lang_badge = f"{lang_badge} (English fallback)"
 
     base = dict(query=query, intent=intent, verdict=verdict.verdict,
                 scene_ids=[scene_id] + ([scene_id_b] if scene_id_b else []),
                 feasibility=verdict, tier=tier,
-                language=lang, language_label=language_label(lang))
+                language=lang, language_label=lang_badge)
 
     # Dynamic RAG check for conceptual/methodology questions falling through to scene_describe
     if intent == "scene_describe":
@@ -384,10 +403,13 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             from .kernel.measurement import SENSITIVITY_OFFSETS
             facts["sens_low_ha"], facts["sens_high_ha"] = min(has), max(has)
             facts["sens_width"] = max(SENSITIVITY_OFFSETS)
-            base_ha = facts.get("hectares") or facts.get("delta_ha") or 1.0
+            base_ha = max(facts.get("delta_ha") or 0.0, facts.get("hectares") or 0.0, facts.get("a_ha") or 0.0, 1.0)
             spread = (max(has) - min(has)) / base_ha
 
     conf = compose_confidence(verdict, verdict.cloud_fraction, spread, bs.scaled)
+    if conf.band == "Low" and verdict.verdict == "ANSWER":
+        verdict.verdict = "DEGRADE"
+        base["verdict"] = "DEGRADE"
 
     # Tier B lets the fine-tuned model phrase the measurement. The facts
     # are the kernel's either way -- only the wording differs -- and the
@@ -496,6 +518,13 @@ def _demo() -> None:
     assert len(c.scene_ids) == 2, c.scene_ids
     wd = truth["bihar_post_flood"]["delta_vs_pre_ha"]
     assert abs(c.headline["value"] - wd) / wd < 0.03, (c.headline, wd)
+
+    # 2b. Reversed scene order in change detection must auto-sort chronologically.
+    c_rev = answer("how much more water than before?", "bihar_pre_flood", "bihar_post_flood")
+    assert abs(c_rev.headline["value"] - wd) / wd < 0.03, (c_rev.headline, wd)
+    assert c_rev.verdict == "ANSWER"
+    assert "2024-05-18" in c_rev.narration and "2024-08-27" in c_rev.narration
+    assert "rising to" in c_rev.narration
 
     # 3. ABSTAIN on missing bands, with no number invented.
     b = answer("show me the burn scar", "forest_burn")
