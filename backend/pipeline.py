@@ -416,7 +416,15 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
     # numeral guard below runs on both paths, so a model that invents a
     # figure loses its narration instead of shipping it.
     narration = ""
-    if tier.upper() in ("A", "B"):
+    # Tier B restates a measurement, so it needs one. A describe query plans
+    # zonal_stats rather than measure_area, so facts carry per-index means and
+    # no area at all -- and the model, asked to restate a measurement that is
+    # not there, invents one. Measured on "describe this scene": it produced
+    # 1,204.50 ha and a 4.20 mean from nothing, the numeral guard withheld the
+    # whole narration, and the user got a bracketed apology after 37 seconds.
+    # Tier C's summaries template already answers this case from real
+    # zonal_stats numbers, so skip the model rather than prompt it harder.
+    if tier.upper() in ("A", "B") and _facts_block_has_measure(facts):
         narration = tier_b.narrate_measurement(intent, facts, scene_label,
                                                lang=lang)
         # Reject a reply that is technically non-empty but says nothing. The
@@ -536,6 +544,17 @@ def re_narrate(intent: str, verdict: str, facts: dict, scene_label: str,
     return narration, lbl
 
 
+def _facts_block_has_measure(facts: dict) -> bool:
+    """Is there a measured quantity for Tier B to restate?
+
+    Mirrors the area keys tier_b._facts_block feeds the model. Index/threshold
+    metadata alone is not a measurement: it describes how a number would be
+    computed, not a number.
+    """
+    return any(facts.get(k) is not None
+               for k in ("hectares", "delta_ha", "a_ha", "b_ha"))
+
+
 def _recipe(intent: str):
     from .planner.tier_c import INTENT_RECIPE
     return INTENT_RECIPE.get(intent, ("vegetation", "gt", "the target class"))
@@ -611,8 +630,13 @@ def _demo() -> None:
     #    "analysis completed" line for every scene and every question.
     d1 = answer("describe this scene", "bihar_post_flood").narration
     d2 = answer("describe this scene", "barren").narration
-    assert d1 != d2 and "index means" in d1 and "index means" in d2
+    assert d1 != d2, "overview is identical across two different scenes"
+    assert "scene overview" in d1 and "scene overview" in d2, (d1, d2)
+    # The overview reads each index out in words, so it must carry the index
+    # name and its measured mean -- not just a generic completion line.
+    assert "averages" in d1 and "averages" in d2, (d1, d2)
     assert "withheld" not in d1, "overview numerals failed the guard"
+    assert "withheld" not in d2, "overview numerals failed the guard"
 
     # 10. Knowledge / methodology questions return direct RAG explanation
     o = answer("what id the meaning of otsu", "bihar_post_flood")
