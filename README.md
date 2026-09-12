@@ -13,6 +13,36 @@ pip install rasterio numpy pillow scikit-image pydantic fastapi "uvicorn[standar
 python run.py
 ```
 
+That installs Tier C, which needs no model weights and no GPU.
+
+Tier B (the fine-tuned model writes the prose) needs more, and a GPU:
+
+```bash
+pip install sentence-transformers faiss-cpu python-multipart
+pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision
+pip install "transformers>=4.49,<4.57" peft accelerate bitsandbytes             sentencepiece protobuf
+```
+
+Four of those are easy to miss, and each was found by a real failure:
+
+| package | what breaks without it |
+|---|---|
+| `python-multipart` | FastAPI refuses to build the upload routes; `backend.app` fails to import |
+| `torchvision` | EarthDial's vision tower cannot import; the model load fails |
+| `protobuf` | the SentencePiece tokenizer cannot be read, and transformers falls back to a TikToken extractor that then demands `tiktoken` |
+| `sentencepiece` | same tokenizer path |
+
+Install `torch` and `torchvision` from the cu121 index **together**. Installing
+anything from PyPI afterwards can pull a CPU-only `torch` over the CUDA build,
+and `torch.cuda.is_available()` silently becomes False.
+
+Do not upgrade transformers past 4.56: EarthDial vendors Phi-3 and relies on
+internals that moved after that. Tier B also expects the weights under
+`models/` (8.29 GB base + the LoRA adapter) and is selected with
+`SATQUERY_TIER=B`. Without them the app still runs -- it falls back to Tier C
+and reports why at `/api/v1/health`.
+```
+
 That is the whole thing. `run.py` builds the demo scenes if they are missing,
 runs every self-check, frees port 8000 if a previous run is still holding it,
 starts the server, verifies the UI in a real browser, and opens it.

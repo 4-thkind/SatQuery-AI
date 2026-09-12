@@ -511,9 +511,18 @@ function App() {
       h('div', { className: 'brand' }, 'SatQuery ', h('span', null, 'AI')),
       h('div', { className: 'ps' }, 'SIH26167 · ISRO / Dept. of Space · Team KERNEL'),
       h('div', { className: 'badges' },
-        h('div', { className: 'badge' }, h('span', { className: 'dot live' }),
+        h('div', { className: 'badge', title: (health.tier_description || '') },
+          h('span', { className: 'dot live' }),
           'Tier ' + (health.tier || '—') + ' · ' +
-          (health.tier === 'C' ? 'No model weights' : 'VLM')),
+          (health.tier === 'C' ? 'No model weights'
+            : (health.tier_b && health.tier_b.tier_b_loaded) ? 'VLM loaded'
+            : (health.tier_b && health.tier_b.load_error) ? 'VLM failed — using templates'
+            : 'VLM idle')),
+        h('div', { className: 'badge',
+                   title: 'Retrieval backend: dense = embeddings + FAISS, '
+                          + 'bm25 = lexical fallback, no model weights' },
+          h('span', { className: 'dot' }),
+          'RAG · ' + (health.retrieval || '—')),
         h('div', { className: 'badge' }, h('span', { className: 'dot' }),
           'Offline · ' + (health.outbound_requests ?? 0) + ' outbound'),
         h('div', { className: 'badge', title: 'Language detected from your last query' },
@@ -641,15 +650,29 @@ function App() {
                 h('b', null, sc.acquired),
                 h('span', { className: 'tag' }, i === 0 ? 'BEFORE' : 'AFTER')),
               h('div', { className: 'frame' },
-                h('img', { src: API + '/' + (view === 'false' ? sc.preview_false : sc.preview_natural) }),
+                h('img', {
+                  key: 'base-' + sc.id + '-' + view,
+                  src: API + '/' + (view === 'false' ? sc.preview_false : sc.preview_natural)
+                }),
                 i === 1 && showMask && h('img', {
+                  // Keyed so a scene change REMOUNTS this node. Without it
+                  // React only swaps src and the browser keeps showing the
+                  // previous scene's mask until the new PNG decodes -- a
+                  // second or two of one scene's water drawn over another's.
+                  key: maskUrl,
                   className: 'ov', src: maskUrl, style: { opacity: op / 100 },
                   onError: e => { e.target.style.display = 'none'; }
                 }))))),
 
           scene && !compare && h('div', { className: 'frame' },
-            showBase && h('img', { src: API + '/' + (view === 'false' ? scene.preview_false : scene.preview_natural) }),
+            showBase && h('img', {
+              key: 'base-' + scene.id + '-' + view,
+              src: API + '/' + (view === 'false' ? scene.preview_false : scene.preview_natural)
+            }),
             showMask && h('img', {
+              // See the comparison view above: keyed to force a remount so the
+              // outgoing scene's mask cannot linger over the incoming one.
+              key: maskUrl,
               className: 'ov', src: maskUrl, style: { opacity: op / 100 },
               onError: e => { e.target.style.display = 'none'; }
             }),
