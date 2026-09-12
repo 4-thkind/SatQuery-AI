@@ -134,14 +134,47 @@ with app.setup:
     # tracking it down and no divergence. The run was stopped by OneCycleLR
     # finishing, not by convergence.
     TRAIN_SAMPLES = 40_000
-    EPOCHS = 3
+    # EPOCHS 6, sized from the measured loss trend rather than guessed.
+    #
+    # Accuracy across runs tracks FINAL LOSS, not row count:
+    #   run 4  loss 0.2448  31,781 rows  ->  60.1% overall / 57.2% unseen
+    #   run 5  loss 0.4194  25,921 rows  ->  47.1% / 43.8%
+    #   run 6  loss 0.4002  39,246 rows  ->  54.6% / 48.0%
+    #
+    # Run 6 had the most data and still lost, because it never converged. Its
+    # exposure per row was IDENTICAL to run 4's (2.85 samples seen per row at
+    # 3 epochs) -- but it has 39,246 distinct rows to fit instead of 31,781, so
+    # the same exposure leaves a higher loss.
+    #
+    # Run 6's val was 0.5091 -> 0.4421 -> 0.3965, improving ~0.046/epoch and
+    # decelerating, so +2 epochs projects to only ~0.305 -- still short of run
+    # 4's 0.2532. 6 epochs is what the trend needs to reach that level. The
+    # risk of overshooting is removed by best-epoch checkpointing below, which
+    # keeps the best epoch's weights rather than the last epoch's, so setting
+    # this too high now costs time instead of accuracy.
+    EPOCHS = 6
     EVAL_SAMPLES = 5_000          # asked for; category matching trims this
     MIN_EVAL_ROWS = 1_500         # below this the number is not worth quoting
-    LORA_RANK = 64
-    LORA_ALPHA = 128              # EarthDial's convention: alpha = 2 * r
+    # Rank 128 is EarthDial's own default, and run 3 argues for the capacity:
+    # its loss was still descending when the schedule ended, and MCQ -- where
+    # all the remaining headroom is -- requires reading option CONTENT rather
+    # than position, because the numeric options are unordered (e.g. "a) 0,
+    # b) 5, c) 3, d) 2"). That is a harder function than binary yes/no and
+    # plausibly capacity-limited.
+    #
+    # Cost is affordable: ~201 M trainable params (up from 100.7 M), which is
+    # ~0.4 GB bf16 plus ~1.6 GB of AdamW moments on a 96 GB card whose base
+    # model occupies 8.29 GB. Headroom is not the constraint.
+    LORA_RANK = 128
+    LORA_ALPHA = 256              # EarthDial's convention: alpha = 2 * r
     LORA_DROPOUT = 0.05
-    BATCH_SIZE = 4
-    GRAD_ACCUM = 4                # effective batch 16
+    # Effective batch stays 16, but in one forward pass instead of four.
+    # Measured: median prompt is 21 words, p95 is 42, answers are 1 word, so
+    # a batch of 4 was using a rounding error of a 96 GB card. Padding is to
+    # the batch maximum (see collate), not to MAX_SEQ_LEN, so wider batches
+    # cost almost nothing in wasted tokens.
+    BATCH_SIZE = 16
+    GRAD_ACCUM = 1                # effective batch 16, unchanged
     LR = 2e-4
     MAX_SEQ_LEN = 1024
     SEED = 26167                  # the problem statement number
@@ -253,7 +286,9 @@ with app.setup:
                 s = score_answer(pred, ref, row["type"])
                 scores.setdefault(row["type"], []).append(s)
                 preds.append({"type": row["type"], "pred": pred, "ref": ref,
-                              "score": s, "phase": tag})
+                              "score": s, "phase": tag,
+                              "category": row.get("category"),
+                              "seen_in_train": row.get("seen_in_train")})
                 bar.update()
         table = {k: sum(v) / len(v) for k, v in scores.items()}
         overall = (sum(sum(v) for v in scores.values())
@@ -827,6 +862,11 @@ def _(load_report, meta):
         # boilerplate clause, so token F1 was rewarding a memorised template.
         # Both dragged the overall figure down while measuring nothing, so the
         # budget goes entirely to the tasks the setup can support.
+        # Back to 50/50. Run 5 shifted this to 35/65 to chase MCQ, but the MCQ
+        # shortfall was the patch-pool bug above, not the task weighting -- so
+        # the shift freed zero MCQ rows and merely deleted 5,860 binary rows.
+        # Binary fell 69.9% -> 60.6% as a direct result. With the full corpus
+        # restored, both tasks can fill their ask.
         MIX = {"binary": 0.50, "mcq": 0.50}
 
         # Categories whose answer lives ONLY in the pixels.
@@ -854,17 +894,27 @@ def _(load_report, meta):
         # manifest states the rule alongside the numbers.
         BLIND_CATEGORIES = {"season", "climate zone", "country", "presence"}
 
-        # Restrict to patches the LMDB actually holds. Cell 8 writes this list;
-        # without it we would sample from all 9.5M annotations and most would
-        # reference imagery that is not in the subset.
-        avail_file = RUNS / "available_patches.json"
-        if avail_file.exists():
-            avail = set(json.loads(avail_file.read_text(encoding="utf-8")))
-            pool_all = meta[meta["patch_id"].isin(avail)]
-            scope = f"{len(avail):,} patches in LMDB subset"
-        else:
-            pool_all = meta
-            scope = "full corpus (no LMDB subset list found)"
+        # Train from the FULL corpus, not the Lithuania LMDB subset.
+        #
+        # This was the bug that capped MCQ for three runs. The subset holds
+        # 8,775 patches, of which only 4,008 carry MCQ rows, and the corpus
+        # yields ~3.12 MCQ rows per patch -- so MCQ was pinned at ~12,513 rows
+        # no matter what was asked for. Runs 4 and 5 produced byte-identical
+        # per-category counts (4,008 / 4,008 / 3,165 / 1,332) at two different
+        # SHAPE_TOLERANCE values and two different task mixes, which is what
+        # finally identified the patch pool rather than the sampler as the
+        # binding constraint.
+        #
+        # The filter bought nothing: this training run is text-only and never
+        # opens the LMDB. Worse, bench draws from the full corpus, so only 9 of
+        # 839 bench patches fell inside the subset -- train and eval were drawn
+        # from different geographies for no reason.
+        #
+        # The LMDB still matters: cell 8 proves the imagery path opens and the
+        # bands are what the model expects. It just should not constrain which
+        # instruction pairs we train on.
+        pool_all = meta
+        scope = "full corpus (train no longer restricted to the LMDB subset)"
 
         def take(df, split, n, shape_like=None):
             """Sample n rows of `split`, matching MIX by task.
@@ -903,8 +953,36 @@ def _(load_report, meta):
                     continue
                 shares = ref.category.value_counts(normalize=True)
                 have = sub.category.value_counts()
-                ratios = [have.get(cat, 0) / share
-                          for cat, share in shares.items() if share > 0]
+
+                # Scale every quota by one common factor so the shape holds --
+                # but do NOT let the single scarcest category throttle all the
+                # others to nothing.
+                #
+                # Run 3 exposed this: `relative pos` had ~987 rows available and
+                # is 8.2% of the MCQ shape, so the exact-shape rule capped MCQ
+                # at 987/0.082 = 12,000 rows no matter how much was asked for.
+                # Raising TRAIN_SAMPLES past that point bought zero extra MCQ
+                # data, while MCQ is exactly where the headroom is (its three
+                # categories are 38-56% against binary's 61-76%).
+                #
+                # So: take the largest budget that keeps every category within
+                # SHAPE_TOLERANCE of its target share, letting a genuinely
+                # exhausted bucket under-fill instead of starving the rest. At
+                # tolerance 1.0 this is the old exact behaviour; at 0.5 a
+                # category may come in at half its target share, which shifts
+                # the distribution far less than losing 40% of the data does.
+                # 0.5. Tolerance was never the constraint: runs 4 and 5 took
+                # identical per-category MCQ rows at 0.5 and 0.3, because every
+                # bucket was pinned to raw availability in the LMDB subset (see
+                # the pool_all comment above). With the full corpus restored,
+                # keep the tolerance that holds the shape reasonably tight.
+                SHAPE_TOLERANCE = 0.5
+                ratios = []
+                for cat, share in shares.items():
+                    if share <= 0:
+                        continue
+                    avail = int(have.get(cat, 0))
+                    ratios.append(avail / (share * SHAPE_TOLERANCE))
                 budget = min([want] + ratios) if ratios else 0
                 for cat, share in shares.items():
                     k = min(int(round(budget * share)), int(have.get(cat, 0)))
@@ -940,6 +1018,24 @@ def _(load_report, meta):
 
         train_rows = [to_conv(r) for _, r in train_df.iterrows()]
         bench_rows = [to_conv(r) for _, r in bench_df.iterrows()]
+
+        # Mark bench rows whose PROMPT TEXT also occurs in training.
+        #
+        # patch_id overlap between the splits is zero -- the corpus authors
+        # separated them properly -- but the same question wording recurs
+        # across different patches, so 28% of bench prompts were seen verbatim
+        # during training with a possibly different correct answer. Run 3
+        # scored those 68.3% against 59.1% on unseen wording.
+        #
+        # Almost all of it is binary (743 of 745 leaked rows), and binary was
+        # actually FLAT across the split (70.1% clean vs 68.2% leaked), so this
+        # looks like a sampling artefact rather than memorisation. That is a
+        # conclusion to reach from the numbers, though, not to assume -- so
+        # both figures get reported every run and the clean one is the
+        # headline.
+        _train_prompts = {r["conversations"][0]["value"] for r in train_rows}
+        for _r in bench_rows:
+            _r["seen_in_train"] = _r["conversations"][0]["value"] in _train_prompts
 
         # The second run answered "no" 1,008 times against 755 actual "no"s --
         # a learned prior, not a reading of the question. The corpus is only
@@ -983,8 +1079,51 @@ def _(load_report, meta):
             "\n".join(json.dumps(r) for r in bench_rows), encoding="utf-8"
         )
 
+        # Identical prompt wording with contradictory answers, because the
+        # same question applies to different patches and the pixels are what
+        # disambiguate them. Text-only supervision cannot resolve these, so
+        # they impose a hard ceiling: the best any model can do is the
+        # majority answer per colliding prompt. Run 3 measured 94.1%. Worth
+        # stating so nobody chases a number that cannot exist.
+        _by_prompt = collections.defaultdict(list)
+        for _r in train_rows:
+            _by_prompt[_r["conversations"][0]["value"]].append(
+                _r["conversations"][1]["value"])
+        _conf = {q: v for q, v in _by_prompt.items() if len(set(v)) > 1}
+        _conf_rows = sum(len(v) for v in _conf.values())
+        _best = sum(collections.Counter(v).most_common(1)[0][1]
+                    for v in _conf.values())
+        _ceiling = ((len(train_rows) - _conf_rows + _best) / len(train_rows)
+                    if train_rows else 1.0)
+
+        # Per-task / per-category row counts for the run that ACTUALLY happened.
+        #
+        # SHAPE_TOLERANCE could not be validated locally: the only corpus
+        # available offline was a previous run's already-capped output, where
+        # every bucket sits exactly at its ceiling and the tolerance therefore
+        # has no slack to exploit. Against the real 9.5M-row parquet it may
+        # recover a lot of MCQ data or none at all. Printing the counts is how
+        # we find out, rather than assuming.
+        _mix_actual = collections.Counter(
+            (r["type"], r["category"]) for r in train_rows)
+        _mix_lines = [
+            f"    {k[0]}/{k[1]:<14s} {v:6,d}"
+            for k, v in sorted(_mix_actual.items(), key=lambda x: -x[1])
+        ]
+        _n_mcq = sum(v for k, v in _mix_actual.items() if k[0] == "mcq")
+        _n_bin = sum(v for k, v in _mix_actual.items() if k[0] == "binary")
+
         report = [
             f"scope: {scope}",
+            f"rows taken  mcq {_n_mcq:,}  binary {_n_bin:,}  "
+            f"(asked {TRAIN_SAMPLES // 2:,} each)",
+            "actual category mix:",
+            *_mix_lines,
+            f"prompt collisions {len(_conf):,} prompts / {_conf_rows:,} rows "
+            f"-> accuracy ceiling {_ceiling:.1%}",
+            f"bench prompts seen in train: "
+            f"{sum(1 for r in bench_rows if r['seen_in_train']):,} of "
+            f"{len(bench_rows):,}",
             f"binary balanced {before_n:,} -> {after_n:,} rows (per-category yes/no floor)",
             f"train {len(train_rows):,}   bench {len(bench_rows):,}",
             "",
@@ -1141,6 +1280,7 @@ def _(model, samples_report, tokenizer, train_rows):
         # made unlikely -- and the useful signal is which epoch it started,
         # which a single before/after pair cannot show.
         val_track = [v0]
+        best_state, best_epoch = None, 0
         step_i = 0
         with mo.status.progress_bar(
                 total=len(loader) * EPOCHS, title="training") as bar:
@@ -1167,7 +1307,41 @@ def _(model, samples_report, tokenizer, train_rows):
                     else:
                         bar.update(increment=0)
                 val_track.append(val_loss())
+
+                # Keep the BEST epoch's weights, not the last epoch's.
+                #
+                # Without this, EPOCHS is a guess you pay a full rerun to
+                # correct: runs 5 and 6 both happened to end on their best
+                # epoch, but the old code saved whatever the final pass left
+                # behind and merely printed a warning if an earlier epoch had
+                # been better. With more epochs that warning becomes the
+                # likely outcome, and a degraded adapter is not worth a rerun.
+                #
+                # Snapshot to CPU so a long run does not hold a second copy of
+                # the adapter in VRAM. Only LoRA tensors are trainable, so this
+                # is ~800 MB of adapter, not the 8.29 GB base model.
+                if val_track[-1] <= min(val_track[:-1]):
+                    best_state = {
+                        k: v.detach().to("cpu", copy=True)
+                        for k, v in model.language_model.state_dict().items()
+                        if "lora" in k.lower()
+                    }
+                    best_epoch = epoch + 1
         v1 = val_track[-1]
+
+        # Restore the best epoch before saving, if a later epoch was worse.
+        restored = ""
+        if best_state is not None and best_epoch < EPOCHS:
+            missing, unexpected = model.language_model.load_state_dict(
+                best_state, strict=False)
+            if unexpected:
+                raise RuntimeError(
+                    f"best-epoch restore got unexpected keys: "
+                    f"{list(unexpected)[:5]}")
+            restored = (f"restored epoch {best_epoch} "
+                        f"(val {val_track[best_epoch]:.4f}) over epoch "
+                        f"{EPOCHS} (val {v1:.4f})")
+            v1 = val_track[best_epoch]
 
         adapter_dir.mkdir(parents=True, exist_ok=True)
         # save_embedding_layers=False: the default "auto" re-reads the base
@@ -1184,23 +1358,26 @@ def _(model, samples_report, tokenizer, train_rows):
         (RUNS / "loss_curve.json").write_text(
             json.dumps({"losses": losses, "first50": first, "last50": last,
                         "val_before": v0, "val_after": v1,
-                        "val_per_epoch": val_track, "epochs": EPOCHS}),
+                        "val_per_epoch": val_track, "epochs": EPOCHS,
+                        "best_epoch": best_epoch,
+                        "restored": bool(restored)}),
             encoding="utf-8")
 
         best = min(range(len(val_track)), key=lambda i: val_track[i])
-        if v1 >= v0:
+        if best == 0:
             verdict = (
-                "!! val loss ROSE overall: this run overfit. Lower EPOCHS or "
-                "LORA_RANK and rerun; do not quote this number.")
-        elif best < len(val_track) - 1:
+                "!! no epoch beat the pre-training val loss: this run learned "
+                "nothing. Do not quote it -- check the data and the LR.")
+        elif restored:
+            # Not a problem to fix: the best weights are the ones on disk.
             verdict = (
-                f"!! val loss was lowest after epoch {best} "
-                f"({val_track[best]:.4f}) and rose to {v1:.4f} by the end -- "
-                f"the last epoch cost accuracy. Set EPOCHS = {best} and "
-                f"rerun before quoting this.")
+                f"val loss bottomed before the final epoch, and the saved "
+                f"adapter is that epoch's -- {restored}. No rerun needed. "
+                f"EPOCHS could drop to {best} to save time.")
         else:
             verdict = ("val loss fell every epoch and was lowest at the end "
-                       "-- learning, not memorising.")
+                       "-- learning, not memorising. If accuracy is still "
+                       "short, raise EPOCHS: the run has not converged.")
         return "\n".join([
             baseline_note,
             f"trainable  {trainable / 1e6:.1f} M of {total / 1e9:.2f} B "
@@ -1209,7 +1386,8 @@ def _(model, samples_report, tokenizer, train_rows):
             f"steps      {len(loader)} batches, {steps} optimiser steps",
             f"train loss {first:.4f} -> {last:.4f}",
             f"val loss   {' -> '.join(f'{x:.4f}' for x in val_track)}",
-            f"epochs     {EPOCHS}",
+            f"epochs     {EPOCHS}"
+            + (f"  (kept epoch {best_epoch})" if restored else ""),
             f"time       {(time.time() - t0) / 60:.1f} min",
             f"adapter    {adapter_dir}",
             "",
@@ -1248,9 +1426,34 @@ def _(bench_rows, model, tokenizer, train_report):
             for k, v in by_task.items() if v
         }
 
+        # Accuracy on bench rows whose prompt wording was NEVER seen in
+        # training, which is the figure worth quoting, and on the ones that
+        # were, so the gap is visible rather than buried.
+        clean = [r for r in preds if not r.get("seen_in_train")]
+        leaked = [r for r in preds if r.get("seen_in_train")]
+
+        def _mean(rows):
+            return sum(r["score"] for r in rows) / len(rows) if rows else None
+
+        clean_overall, leaked_overall = _mean(clean), _mean(leaked)
+        clean_per_type = {
+            k: _mean([r for r in clean if r["type"] == k])
+            for k in sorted({r["type"] for r in clean})
+        }
+
         result = {"per_type": table, "overall": overall, "n": len(bench_rows),
                   "counts": counts, "baseline": base,
-                  "majority_class": majority}
+                  "majority_class": majority,
+                  "unseen_prompts": {
+                      "overall": clean_overall, "n": len(clean),
+                      "per_type": clean_per_type,
+                      "note": "prompt wording absent from training; the "
+                              "figure to quote"},
+                  "seen_prompts": {
+                      "overall": leaked_overall, "n": len(leaked),
+                      "note": "prompt wording also occurs in training, on a "
+                              "different patch and possibly with a different "
+                              "answer; patch_id overlap between splits is 0"}}
         (RUNS / "bench_results.json").write_text(
             json.dumps(result, indent=2), encoding="utf-8")
         (RUNS / "bench_predictions.jsonl").write_text(
@@ -1279,6 +1482,22 @@ def _(bench_rows, model, tokenizer, train_report):
                          "reference. A tuned")
             lines.append("  figure at or below it has learned nothing usable, "
                          "whatever the delta says.")
+            lines.append("")
+            if clean_overall is not None and leaked_overall is not None:
+                lines.append(f"  unseen prompt wording  {clean_overall:7.1%}  "
+                             f"(n={len(clean)})   <- the number to quote")
+                lines.append(f"  seen   prompt wording  {leaked_overall:7.1%}  "
+                             f"(n={len(leaked)})")
+                lines.append(f"  gap                    "
+                             f"{leaked_overall - clean_overall:+7.1%}")
+                lines.append("")
+                lines.append("  Splits share no patch_id; only question wording "
+                             "recurs. Quote the")
+                lines.append("  unseen figure -- it is the one no memorised "
+                             "prompt can flatter.")
+            elif clean_overall is not None:
+                lines.append(f"  every bench prompt was unseen in training "
+                             f"({clean_overall:.1%})")
         else:
             for k in sorted(table):
                 lines.append(f"  {k:16s} {table[k]:7.1%}   {metric.get(k, '')} "

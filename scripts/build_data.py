@@ -10,8 +10,11 @@ import sys
 import pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
+# register_real.py runs AFTER make_manifest.py: that step rewrites
+# manifest.json from scratch off data/demo/*.tif, so real-scene entries
+# appended earlier would be silently erased.
 STEPS = ["make_scenes.py", "make_previews.py", "make_manifest.py",
-         "make_rainfall.py", "verify_scenes.py"]
+         "register_real.py", "make_rainfall.py", "verify_scenes.py"]
 
 
 def main():
