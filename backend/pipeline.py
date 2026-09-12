@@ -162,7 +162,11 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
                 base["intent"] = "method_explain"
 
     if intent == "method_explain":
-        citations = get_retriever().cite(query, k=3)
+        # k=2 to match what the Tier B prompt actually consumes.
+        # Retrieving a third chunk only to drop it costs latency in the
+        # dense search and adds a chunk the verbatim fallback would
+        # otherwise paste into the answer.
+        citations = get_retriever().cite(query, k=2)
         if citations:
             top = citations[0]
             title = top.get("title", "Methodology Reference")

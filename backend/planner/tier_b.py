@@ -98,7 +98,12 @@ LOAD_IN_4BIT = os.environ.get("SATQUERY_4BIT", "0") != "0"
 LOAD_IN_8BIT = (os.environ.get("SATQUERY_BF16", "0") == "0"
                 and not LOAD_IN_4BIT)
 
-MAX_NEW_TOKENS = int(os.environ.get("SATQUERY_MAX_NEW_TOKENS", "160"))
+# 72, down from 160. Corpus answers measured 3.79-4.07 s per call, which is
+# the slowest thing a user waits on; the answers themselves come back at ~122
+# characters, roughly 30 tokens. The cap was never the limit on length -- the
+# model stops at <|end|> long before it -- but it does bound the worst case
+# when generation rambles, and a token is ~25 ms here.
+MAX_NEW_TOKENS = int(os.environ.get("SATQUERY_MAX_NEW_TOKENS", "72"))
 
 # One model per process, loaded on first use rather than at import: importing
 # backend.app must not cost 8 GB of VRAM in a process that only serves /health.
@@ -356,8 +361,16 @@ def answer_from_corpus(query: str, citations: list[dict],
         return ""
 
     ctx = "\n\n".join(
-        f"[{i + 1}] {c.get('title', '')}\n{(c.get('text') or c.get('excerpt') or '')[:1200]}"
-        for i, c in enumerate(citations[:3])
+        # Two chunks at 700 chars, not three at 1200. Prompt length
+        # dominates this path: measured 5.52 s at three full chunks
+        # against 1.88 s at one, because ~757 tokens of context cost far
+        # more than the ~30 tokens the model then writes. Two keeps a
+        # corroborating source while landing the answer near 3 s.
+        #
+        # Cutting MAX_NEW_TOKENS first was the wrong lever: the model
+        # stops at <|end|> well before any cap, so the cap never bound.
+        f"[{i + 1}] {c.get('title', '')}\n{(c.get('text') or c.get('excerpt') or '')[:700]}"
+        for i, c in enumerate(citations[:2])
     )
     prompt = (
         "<|user|>\n"

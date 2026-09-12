@@ -96,6 +96,31 @@ def _prewarm_retrieval() -> None:
 _prewarm_retrieval()
 
 
+def _prewarm_model() -> None:
+    """Load the Tier B model at import, not on the first user query.
+
+    tier_b._load() is lazy by design so a Tier C process never pays 8 GB
+    of VRAM. At Tier B that laziness lands on whoever asks first: measured
+    over HTTP, the first query took 11.3 s and the second 3.6 s, while the
+    same call in a warm process is 0.27 s. The model load was being billed
+    to a user instead of to startup.
+
+    Same trade as the retriever above -- startup slower, every query fast.
+    Skipped at Tier C, where no model is wanted, and non-fatal either way:
+    on failure the first query simply pays the cost, exactly as before.
+    """
+    if TIER not in ("A", "B"):
+        return
+    try:
+        from .planner import tier_b
+        tier_b._load()
+    except Exception:                             # noqa: BLE001
+        pass
+
+
+_prewarm_model()
+
+
 def _db():
     return ledger_mod.connect()
 
