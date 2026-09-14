@@ -96,6 +96,40 @@ EXPLAIN_MARKERS = [
     "ka matlab", "kya hota hai", "samjhao", "what is satquery", "architecture",
     "how satquery", "pipeline", "ledger", "guardrail", "formula", "algorithm",
     "methodology", "how area is measured", "how index is computed", "how masking done",
+    # The "why" family. Its absence sent "why do you need SWIR2 for burn
+    # severity?" to burn_severity, which then hit the feasibility gate against
+    # a LISS-III scene with no SWIR2 and refused -- a correct gate answering
+    # the wrong question. A "why" question asks for a reason, never for a
+    # measurement, so it belongs here whatever subject word follows it.
+    "why do", "why does", "why is", "why are", "why can", "why cannot",
+    "why can't", "why not", "why use", "why would", "kyun", "kyon", "क्यों",
+    # Bare "what is" / "what are". The list had "what is the meaning" and
+    # "what does" but nothing for the commonest phrasing of all, so
+    # "what is MNDWI" scored only scene_describe and "what is NDVI" was
+    # captured outright by the vegetation lexicon.
+    "what is", "what are", "what's", "whats",
+    "kya hai", "क्या है", "kya hota", "batao",
+]
+
+# Definition queries: "what is X", "explain X", "define X". These name a
+# subject term (NDVI, MNDWI, Otsu) purely to ask ABOUT it, so the subject
+# lexicon must not capture them -- "what is NDVI" is a methodology question,
+# not a request to measure vegetation on the current scene.
+DEFINITION_MARKERS = [
+    "what is", "what are", "what's", "whats", "what does", "meaning of",
+    "definition", "define", "explain", "ka matlab", "kya hai", "क्या है",
+    "kya hota", "samjhao", "समझाओ", "मतलब",
+]
+
+# Words that turn "what is X" into a request for a measurement of THIS scene
+# rather than a definition of X. "What is the water extent?" and "what is the
+# flooded area" are measurements; "what is MNDWI" is not. Without this the
+# definition rule captured both, which is a worse failure than the one it
+# fixed -- a user asking for a number would get a lecture.
+QUANTITY_MARKERS = [
+    "extent", "area", "coverage", "how much", "how many", "hectares", "ha",
+    "km2", "sq km", "square", "percentage", "percent", "fraction", "count",
+    "kitna", "kitne", "क्षेत्र", "क्षेत्रफल",
 ]
 
 # Checked in order; the first match wins when scores tie. Specific before generic.
@@ -133,9 +167,28 @@ def classify(query: str) -> tuple[str, bool, dict]:
     is_change = any(_term_matches(t, q) for t in CHANGE_MARKERS)
     is_measure = any(_term_matches(m, q) for m in MEASURE_MARKERS)
     is_explain = any(_term_matches(e, q) for e in EXPLAIN_MARKERS)
+    is_definition = any(_term_matches(d, q) for d in DEFINITION_MARKERS)
+    is_quantity = any(_term_matches(n, q) for n in QUANTITY_MARKERS)
 
-    # Explanatory / conceptual query: definition, meaning, or algorithm without scene measurement
-    if (is_explain or "method_explain" in scores) and not is_measure:
+    # A definition query wins outright over the subject lexicon. "what is NDVI"
+    # names an index in order to ask about it, and was being answered as
+    # vegetation_health -- a measurement of the current scene, which is not
+    # what was asked.
+    #
+    # Both guards are needed. MEASURE_MARKERS catches "how much" and "in this
+    # scene"; QUANTITY_MARKERS catches the phrasing that names the quantity
+    # instead -- "what is the water extent?" reads exactly like a definition
+    # until you notice "extent" is the thing being asked for.
+    if is_definition and not is_measure and not is_quantity:
+        return "method_explain", False, scores
+
+    # Explanatory / conceptual query: definition, meaning, or algorithm without
+    # scene measurement. The quantity guard is repeated here deliberately --
+    # EXPLAIN_MARKERS and DEFINITION_MARKERS overlap ("what is" is in both), so
+    # guarding only the first branch let "what is the water extent?" fall
+    # through to this one and become a lecture instead of a measurement.
+    if (is_explain or "method_explain" in scores) and not is_measure \
+            and not is_quantity:
         return "method_explain", False, scores
 
     subject = {k: v for k, v in scores.items()
