@@ -811,12 +811,32 @@ function App() {
   useEffect(() => {
     api('/api/v1/health').then(setHealth).catch(() => {});
     api('/api/v1/scenes').then(d => {
-      // Demo order, not alphabetical: the flood story leads, controls trail.
-      const ORDER = ['bihar_post_flood', 'bihar_pre_flood', 'bihar_post_flood_cloudy',
+      // Demo order, not alphabetical. REAL ISRO data leads: the first thing a
+      // viewer sees should be a Resourcesat LISS-III scene from Bhoonidhi, not
+      // a synthetic fixture. The synthetic scenes still matter -- they carry
+      // the exact ground truth the kernel is verified against -- but they are
+      // the evidence, not the headline, so they trail.
+      //
+      // 18aug2022 opens: peak monsoon, and it is the scene the manifest pairs
+      // with 02feb2023, so bi-temporal change detection is one click away from
+      // the landing state.
+      const ORDER = [
+        // real Bhoonidhi LISS-III, chronological within the monsoon story
+        'liss3_106_053_18aug2022', 'liss3_106_053_02feb2023',
+        'liss3_106_053_25jul2022', 'liss3_106_053_01jul2022',
+        'liss3_106_053_05oct2022', 'liss3_106_053_29oct2022',
+        'liss3_106_053_22nov2022', 'liss3_106_053_16dec2022',
+        // synthetic fixtures with exact ground truth
+        'bihar_post_flood', 'bihar_pre_flood', 'bihar_post_flood_cloudy',
         'urban_t1', 'urban_t2', 'forest_burn', 'barren'];
-      d.scenes.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+      // Unknown ids (uploads) sort last rather than first: indexOf returns -1,
+      // which would otherwise float them above everything.
+      const rank = id => { const i = ORDER.indexOf(id); return i === -1 ? ORDER.length : i; };
+      d.scenes.sort((a, b) => rank(a.id) - rank(b.id));
       setScenes(d.scenes);
-      const first = d.scenes.find(s => s.id === 'bihar_post_flood') || d.scenes[0];
+      const first = d.scenes.find(s => s.id === 'liss3_106_053_18aug2022')
+        || d.scenes.find(s => s.id.startsWith('liss3_'))
+        || d.scenes[0];
       if (first) setSid(first.id);
     }).catch(e => setErr('Backend unreachable — start it with: ' +
       'python -m uvicorn backend.app:app  (' + e.message + ')'));
@@ -1005,20 +1025,32 @@ function App() {
           // two were rendered. The mask is drawn only on the current epoch --
           // it was measured from that scene and belongs to it.
           scene && compare && pairScene && h('div', { className: 'cmp' },
-            [pairScene, scene].map((sc, i) => h('div', { className: 'half', key: sc.id },
-              h('div', { className: 'epoch' },
-                h('b', null, sc.acquired),
-                h('span', { className: 'tag' }, i === 0 ? 'BEFORE' : 'AFTER')),
-              h('div', { className: 'frame' },
-                h('img', {
-                  key: 'base-' + sc.id + '-' + view,
-                  src: API + '/' + (view === 'false' ? sc.preview_false : sc.preview_natural)
-                }),
-                i === 1 && showMask && h('img', {
-                  key: maskUrl,
-                  className: 'ov', src: maskUrl, style: { opacity: op / 100 },
-                  onError: e => { e.target.style.display = 'none'; }
-                }))))),
+            // Order by ACQUISITION DATE, not by which scene happens to be
+            // selected. The array used to be [pairScene, scene] with the tags
+            // hardcoded to position, so the selected scene was always labelled
+            // AFTER -- select 2022-08-18 and its 2023-02-02 partner was called
+            // BEFORE, which inverts the timeline and reverses the finding.
+            //
+            // The mask follows scene IDENTITY rather than array position for
+            // the same reason: it was measured from the selected scene and
+            // belongs to it, wherever chronology puts it on screen.
+            [pairScene, scene]
+              .slice()
+              .sort((a, b) => String(a.acquired).localeCompare(String(b.acquired)))
+              .map((sc, i) => h('div', { className: 'half', key: sc.id },
+                h('div', { className: 'epoch' },
+                  h('b', null, sc.acquired),
+                  h('span', { className: 'tag' }, i === 0 ? 'BEFORE' : 'AFTER')),
+                h('div', { className: 'frame' },
+                  h('img', {
+                    key: 'base-' + sc.id + '-' + view,
+                    src: API + '/' + (view === 'false' ? sc.preview_false : sc.preview_natural)
+                  }),
+                  sc.id === scene.id && showMask && h('img', {
+                    key: maskUrl,
+                    className: 'ov', src: maskUrl, style: { opacity: op / 100 },
+                    onError: e => { e.target.style.display = 'none'; }
+                  }))))),
 
           // Single epoch view with interactive Zoom & Pan
           scene && !compare && h('div', {
