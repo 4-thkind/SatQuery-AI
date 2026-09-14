@@ -372,19 +372,36 @@ def answer_from_corpus(query: str, citations: list[dict],
         f"[{i + 1}] {c.get('title', '')}\n{(c.get('text') or c.get('excerpt') or '')[:700]}"
         for i, c in enumerate(citations[:2])
     )
+    # "Three sentences at most" was read as a target rather than a ceiling and
+    # produced one-line answers -- measured: "MNDWI is the water index in the
+    # upper right of the image." for "what is MNDWI", which is both too short
+    # and a fabricated spatial claim. A methodology answer has a known shape
+    # (what it is, the formula, why it works, when it applies), so asking for
+    # that shape works better on a 4B model than asking for a length.
     prompt = (
         "<|user|>\n"
-        "Answer the question using ONLY the reference material below.\n\n"
+        "Explain the question using ONLY the reference material below.\n\n"
+        "Write a complete explanation that covers, where the references "
+        "support it:\n"
+        "- what it is, in one plain sentence\n"
+        "- the formula or method, exactly as written in the references\n"
+        "- why it works physically\n"
+        "- when it is used, or what its limitation is\n\n"
         "RULES:\n"
-        "- If the references do not answer it, say so plainly.\n"
+        "- Use only the reference material. If it does not answer the "
+        "question, say so plainly.\n"
         "- Do not invent numbers, dates, or citations.\n"
-        "- Three sentences at most.\n"
+        "- Never describe where anything sits in an image. You have no "
+        "image -- these are documents.\n"
+        "- Four to six sentences.\n"
         f"- Write in this language code: {lang}\n\n"
         f"References:\n{ctx}\n\n"
         f"Question: {query}\n"
         "<|end|>\n<|assistant|>\n"
     )
-    return _safe_generate(prompt, use_adapter=False)
+    # Longer than a measurement restatement needs: this path writes a
+    # paragraph, and the 72-token default truncated it mid-sentence.
+    return _safe_generate(prompt, max_new_tokens=320, use_adapter=False)
 
 
 def classify(question: str, options: str = "") -> str:
