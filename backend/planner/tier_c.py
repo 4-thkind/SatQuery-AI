@@ -127,8 +127,12 @@ def build_plan(intent: str, bs: BandStack, is_change: bool = False,
 
 def compose_confidence(v: FeasibilityVerdict, cloud_frac: float,
                        sensitivity_spread: float | None, scaled: bool,
-                       grounding: float = 1.0) -> Confidence:
-    """Product of measurable components. Never a vibe, never a model output."""
+                       grounding: float = 1.0, lang: str = "en") -> Confidence:
+    """Product of measurable components. Never a vibe, never a model output.
+
+    `lang` selects the wording of the explanation only. Every number in it
+    comes from `comp`, so the numeral guard accepts it in any language.
+    """
     comp = {
         "feasibility_prior": round(v.prior, 3),
         "cloud_penalty": round(1.0 - min(cloud_frac, 1.0), 3),
@@ -175,9 +179,9 @@ def compose_confidence(v: FeasibilityVerdict, cloud_frac: float,
     weakest = min(comp, key=comp.get)
     # Name the floor when it applied, so a reader who multiplies the five
     # reported components and gets a smaller number than the score knows why.
-    floored = (f" That component is unusable here, so the score is reported "
-               f"against a {COMPONENT_FLOOR} floor rather than collapsing to "
-               f"zero; treat the measurement as indicative only."
+    from . import phrases as _ph
+    _t = _ph.get(lang)
+    floored = (_t["conf_floored"].format(floor=COMPONENT_FLOOR)
                if comp[weakest] < COMPONENT_FLOOR else "")
     # Round to 3 dp, but never display 0.000 for a result that actually ran.
     # Several weak components multiply below a thousandth (0.000169 for a
@@ -188,8 +192,9 @@ def compose_confidence(v: FeasibilityVerdict, cloud_frac: float,
     shown = max(round(score, 3), 0.001)
     return Confidence(
         score=shown, band=band, components=comp,
-        explanation=(f"Product of five measured components; the limiting factor is "
-                     f"{weakest.replace('_', ' ')} at {comp[weakest]}." + floored),
+        explanation=(_t["conf_expl"].format(
+            weakest=_ph.component_name(lang, weakest),
+            value=comp[weakest]) + floored),
     )
 
 
@@ -197,7 +202,7 @@ def _fmt(n: float) -> str:
     return f"{n:,.2f}"
 
 
-def _read_index(index: str, mean: float) -> str:
+def _read_index(index: str, mean: float, lang: str = "en") -> str:
     """Plain-language reading of an index mean. "" when the index is unknown.
 
     Every index here has a documented zero crossing: positive means more of
@@ -205,26 +210,14 @@ def _read_index(index: str, mean: float) -> str:
     an answer without adding a claim -- deliberately no land-cover label, no
     position, no waterbody type, since the kernel measured none of those and
     validator.validate_claims rejects them.
+
+    The wording lives in phrases.READINGS so it translates. It used to be
+    built here with English f-strings, which is why a Hindi scene overview
+    came back with every index line in English and only the confidence line
+    in Hindi.
     """
-    sign = "strongly " if abs(mean) >= 0.30 else ""
-    fam = {
-        "ndvi": ("vegetation response", "vegetation is sparse or absent"),
-        "evi": ("vegetation response", "vegetation is sparse or absent"),
-        "savi": ("vegetation response", "vegetation is sparse or absent"),
-        "ndwi": ("open-water response", "most of the scene is not open water"),
-        "mndwi": ("open-water response", "most of the scene is not open water"),
-        "ndbi": ("built-up/bare response", "little built-up or bare surface"),
-    }.get(index.lower())
-    if not fam:
-        return ""
-    positive, negative = fam
-    if mean > 0:
-        return f"a {sign}positive {positive} on average"
-    if mean < 0:
-        return f"on average negative, so {negative}"
-    # Exactly zero is neither: saying "negative" here would misreport the
-    # measurement over a sign convention's own crossing point.
-    return f"on average at the zero crossing for {positive}"
+    from . import phrases
+    return phrases.reading(lang, index, mean)
 
 
 def narrate(intent: str, verdict: FeasibilityVerdict, facts: dict,
@@ -274,19 +267,19 @@ def narrate(intent: str, verdict: FeasibilityVerdict, facts: dict,
         # asserting anything the kernel did not measure -- no location, no
         # waterbody type, no land-cover class, all of which validate_claims
         # blocks for good reason. Sign and magnitude only.
-        lines.append(f"{scene_label} — scene overview from "
-                     f"{len(facts['summaries'])} spectral "
-                     f"{'index' if len(facts['summaries']) == 1 else 'indices'}:")
+        n = len(facts["summaries"])
+        lines.append(t["overview"].format(
+            scene=scene_label, n=n,
+            word=t["index_one"] if n == 1 else t["index_many"]))
         for d in facts["summaries"]:
-            reading = _read_index(d["index"], d["mean"])
-            lines.append(f"{d['index']} averages {d['mean']:.3f} across the "
-                         f"scene (range {d['min']:.3f} to {d['max']:.3f})"
-                         + (f" — {reading}." if reading else "."))
-        lines.append("Per-pixel statistics for each index are in the evidence "
-                     "ledger. Ask for a specific class (water, vegetation, "
-                     "built-up) to get a measured area in hectares.")
+            reading = _read_index(d["index"], d["mean"], lang)
+            lines.append(t["index_line"].format(
+                index=d["index"], mean=f"{d['mean']:.3f}",
+                lo=f"{d['min']:.3f}", hi=f"{d['max']:.3f}")
+                + (f" — {reading}." if reading else "."))
+        lines.append(t["ledger_note"])
     else:
-        lines.append(f"{scene_label}: analysis completed.")
+        lines.append(t["done"].format(scene=scene_label))
 
     if "index" in facts and "threshold" in facts:
         lines.append(t["method"].format(
