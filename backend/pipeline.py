@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import time
 
 from .core.bandstack import BandStack
@@ -22,7 +23,7 @@ from .planner.places import coverage_message, detect as detect_place, is_covered
 from .rag.retriever import get as get_retriever
 from .planner import tier_b
 from .planner.tier_c import build_plan, compose_confidence, narrate
-from .planner.validator import (validate_against_sources,
+from .planner.validator import (SPATIAL_CLAIMS, validate_against_sources,
                                 validate_narration)
 from .schemas import AnswerPayload, Confidence, SceneRef
 
@@ -203,10 +204,53 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             composed = bool(narration)
 
             def _verbatim() -> str:
-                out = f"{title}\n\n{text}"
+                """Compose the retrieved chunks into an answer, not a dump.
+
+                This is the Tier C path for methodology questions, and it runs
+                whenever Tier B is unavailable, fails to load, or writes
+                something the guards reject. Pasting `title + text + source`
+                was honest but read as a document dump -- and since Tier B is
+                rejected often enough on this path, the dump was what a user
+                actually saw.
+
+                The chunks are already structured: a title, a formula line, and
+                prose explaining the physics. So the fallback reads them out in
+                that order with connective text of its own. Every sentence here
+                is either fixed template text or verbatim corpus content, so no
+                numeral can be invented and no claim can be fabricated.
+                """
+                parts: list[str] = []
+                body = (text or "").strip()
+
+                # A chunk's first line is the formula whenever it contains an
+                # equals sign -- true of every index chunk in the corpus.
+                # Splitting it out lets the answer lead with the definition
+                # and present the formula as a formula.
+                lines = [ln.strip() for ln in body.split("\n") if ln.strip()]
+                formula = ""
+                rest: list[str] = []
+                for ln in lines:
+                    if not formula and "=" in ln and len(ln) < 120:
+                        formula = ln
+                    else:
+                        rest.append(ln)
+
+                parts.append(f"{title}")
+                if formula:
+                    parts.append(f"Formula: {formula}")
+                if rest:
+                    parts.append(" ".join(rest))
+
+                # A second chunk corroborates; name it rather than pasting it,
+                # so the answer stays an answer.
+                if len(citations) > 1:
+                    second = citations[1].get("title", "")
+                    if second and second != title:
+                        parts.append(f"Related reference: {second}.")
+
                 if source:
-                    out += f"\n\nSource: {source}"
-                return out
+                    parts.append(f"Source: {source}")
+                return "\n\n".join(parts)
 
             if composed:
                 # A model wrote this, so the numeral guard applies.
@@ -215,13 +259,25 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
                 # if it had been measured. The fact set is empty because
                 # nothing was measured on this path -- it answers "how does
                 # this work", not "how much is there".
-                # Numerals only. The claim guard is deliberately skipped:
-                # this text explains a method rather than describing this
-                # scene, so words like "river" or "coast" are subject matter,
-                # not fabricated observation. Numbers are still fenced --
-                # a figure from a paper must not read as a measurement.
+                # Numerals are checked against the SOURCES, not the kernel:
+                # a formula's constants are fine in prose about a method, but
+                # a measurement is not.
                 _nums, _bad = validate_against_sources(narration, citations)
-                if not _nums:
+
+                # The FEATURE half of the claim guard stays off -- "river",
+                # "coast" and "city" are subject matter in a methodology
+                # answer, not fabricated observation.
+                #
+                # The SPATIAL half is enforced. Measured on "what is MNDWI":
+                # the model wrote "MNDWI is the water index in the upper right
+                # of the image." There is no image on this path -- these are
+                # documents -- so any claim about where something sits in a
+                # frame is invented outright. It contains no digits, so the
+                # numeral guard passed it and it shipped to the user.
+                _spatial = [p for p in SPATIAL_CLAIMS
+                            if re.search(r"(?<![a-z])" + re.escape(p)
+                                         + r"(?![a-z])", narration.lower())]
+                if not _nums or _spatial:
                     narration, composed = _verbatim(), False
             else:
                 narration = _verbatim()
@@ -406,7 +462,8 @@ def answer(query: str, scene_id: str, scene_id_b: str | None = None,
             base_ha = max(facts.get("delta_ha") or 0.0, facts.get("hectares") or 0.0, facts.get("a_ha") or 0.0, 1.0)
             spread = (max(has) - min(has)) / base_ha
 
-    conf = compose_confidence(verdict, verdict.cloud_fraction, spread, bs.scaled)
+    conf = compose_confidence(verdict, verdict.cloud_fraction, spread, bs.scaled,
+                              lang=lang)
     # Both low bands degrade. "Low-Medium" is still a Low-range score -- it
     # only records that a single component failed rather than all of them --
     # so matching "Low" exactly here would silently stop degrading the verdict
@@ -525,19 +582,69 @@ def re_narrate(intent: str, verdict: str, facts: dict, scene_label: str,
 
     lbl = lang_name(lang)
     if not facts:
+        # A methodology answer has no kernel facts, so there is no template to
+        # re-render -- the body is corpus text, quoted from published English
+        # literature, and translating it would break the guarantee that a cited
+        # claim matches its source.
+        #
+        # What CAN be translated is the scaffolding. The old version prefixed
+        # "[हिन्दी]:" and left an English note underneath, so selecting Hindi
+        # visibly changed nothing. Now the note itself is in the target
+        # language, which is honest about what is and is not translated.
         if lang == "en":
             return original_narration, lbl
-        return (f"[{lbl}]: {original_narration}\n\n"
-                f"[Note: Methodological corpus text is cited in English from published literature.]"), lbl
+        t = phrases.get(lang)
+        return f"{original_narration}\n\n{t['cited_en']}", lbl
 
     v_mode = "ANSWER" if verdict in ("OK", "ANSWER") else verdict
     v_obj = FeasibilityVerdict(
         verdict=v_mode, intent=intent, prior=1.0, reason=facts.get("absent", ""), recommendation=""
     )
+
+    # Re-render the confidence explanation in the target language.
+    #
+    # The incoming `conf` carries a finished sentence built when the answer was
+    # first composed, in whatever language THAT was -- so translating an English
+    # answer to Hindi kept an English confidence line at the bottom. The raw
+    # inputs to compose_confidence (cloud fraction, sensitivity spread, the
+    # scaled flag) are not passed here, but `components` holds every measured
+    # value the sentence names, which is enough to rebuild it.
+    #
+    # The score, band and components are reused untouched: this restates the
+    # same measurement in another language, it does not recompute it.
+    if conf is not None and conf.components:
+        from .planner.tier_c import COMPONENT_FLOOR
+        _t = phrases.get(lang)
+        _weakest = min(conf.components, key=conf.components.get)
+        _floored = (_t["conf_floored"].format(floor=COMPONENT_FLOOR)
+                    if conf.components[_weakest] < COMPONENT_FLOOR else "")
+        conf = Confidence(
+            score=conf.score, band=conf.band, components=conf.components,
+            explanation=(_t["conf_expl"].format(
+                weakest=phrases.component_name(lang, _weakest),
+                value=conf.components[_weakest]) + _floored),
+        )
+
     narration = narrate(intent, v_obj, facts, scene_label, conf, lang=lang)
 
-    # Validate numerals strictly against kernel facts
-    ok, bad = validate_narration(narration, facts, extra=[scene_label, conf.score if conf else 1.0])
+    # Validate numerals strictly against kernel facts.
+    #
+    # `conf.components` must be in the allowed set, for exactly the reason the
+    # main pipeline's guard documents: the confidence line names its weakest
+    # component AND that component's value ("threshold stability at 0.118"),
+    # so allowing only conf.score makes a real measured value read as
+    # fabricated. This path was missed when that fix landed, so translating an
+    # answer withheld its narration while the English original kept it --
+    # measured on Kosi Basin 2022-08-18, where threshold_stability is 0.118.
+    #
+    # Latent on synthetic scenes: threshold_stability comes out 1.0 there and
+    # "1" is in ALWAYS_OK. Real imagery produces genuine intermediate values
+    # and the guard starts firing.
+    ok, bad = validate_narration(
+        narration, facts,
+        extra=[scene_label,
+               conf.score if conf else 1.0,
+               conf.components if conf else {}])
     if not ok:
         headline_val = facts.get("hectares", facts.get("delta_ha"))
         class_lbl = phrases.label_for(lang, facts.get("label", "the target class"))
