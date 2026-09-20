@@ -1,1 +1,86 @@
-{}
+{
+  "images_403410": {
+    "id": "images_403410",
+    "label": "Images",
+    "sensor": "Aerial / Optical Photo (RGB+NIR)",
+    "acquired": "2026-09-14",
+    "place": "Custom Uploaded Scene",
+    "cloud_hint": 0.0,
+    "pair": null,
+    "path": "data/uploads/images_403410.tif",
+    "preview_false": "data/uploads/previews/images_403410_false.png",
+    "preview_natural": "data/uploads/previews/images_403410_natural.png",
+    "width": 516,
+    "height": 387,
+    "crs": "EPSG:32645",
+    "transform": [
+      10.0,
+      0.0,
+      86.85,
+      0.0,
+      -10.0,
+      26.05
+    ],
+    "bands": [
+      "red",
+      "green",
+      "blue",
+      "nir"
+    ],
+    "dtype": "uint8",
+    "scale_factor": 255.0,
+    "nodata": 0.0,
+    "pixel_area_m2": 100.0,
+    "bounds_wgs84": [
+      86.85,
+      26.015135135135136,
+      86.90159999999999,
+      26.05
+    ],
+    "synthetic": false,
+    "description": "Custom uploaded image (516x387, bands: RED, GREEN, BLUE, NIR).",
+    "ground_truth": {}
+  },
+  "images_922384": {
+    "id": "images_922384",
+    "label": "Images",
+    "sensor": "Aerial / Optical Photo (RGB+NIR)",
+    "acquired": "2026-09-20",
+    "place": "Custom Uploaded Scene",
+    "cloud_hint": 0.0,
+    "pair": null,
+    "path": "data/uploads/images_922384.tif",
+    "preview_false": "data/uploads/previews/images_922384_false.png",
+    "preview_natural": "data/uploads/previews/images_922384_natural.png",
+    "width": 560,
+    "height": 350,
+    "crs": "EPSG:32645",
+    "transform": [
+      10.0,
+      0.0,
+      86.85,
+      0.0,
+      -10.0,
+      26.05
+    ],
+    "bands": [
+      "red",
+      "green",
+      "blue",
+      "nir"
+    ],
+    "dtype": "uint8",
+    "scale_factor": 255.0,
+    "nodata": 0.0,
+    "pixel_area_m2": 100.0,
+    "bounds_wgs84": [
+      86.85,
+      26.01846846846847,
+      86.90599999999999,
+      26.05
+    ],
+    "synthetic": false,
+    "description": "Custom uploaded image (560x350, bands: RED, GREEN, BLUE, NIR).",
+    "ground_truth": {}
+  }
+}
