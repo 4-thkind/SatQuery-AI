@@ -49,7 +49,7 @@ OUTBOUND_REQUESTS = 0        # never incremented: nothing in this app calls out
 
 app = FastAPI(title="SatQuery AI", version="0.1.0",
               description="Interactive vision-language assistant for multimodal "
-                          "remote sensing image analysis. SIH26167.")
+                          "remote sensing image analysis.")
 _cors_env = os.environ.get("SATQUERY_CORS_ORIGINS")
 ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else [
     "http://127.0.0.1:8000", "http://localhost:8000",
