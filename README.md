@@ -1,6 +1,6 @@
 # SatQuery AI
 
-**SIH26167** — An Interactive Vision-Language Assistant for Multimodal Remote
+An Interactive Vision-Language Assistant for Multimodal Remote
 Sensing Image Analysis through Text Queries. ISRO / Dept. of Space. Team KERNEL.
 
 > No number reaches the user unless a deterministic function computed it from
