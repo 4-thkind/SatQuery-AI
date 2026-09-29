@@ -73,7 +73,7 @@ The measurement engine adheres to the following sequence:
 6. Sensitivity Interval Bounding: To prevent false precision, SatQuery performs a multi-offset sensitivity sweep across [threshold - 0.05, threshold + 0.05]. The minimum and maximum resulting hectare figures establish the lower and upper bounds of measurement uncertainty.
 
 ## SatQuery AI System Architecture and Pipeline Flow
-source: SatQuery AI System Architecture Specification (SIH26167)
+source: SatQuery AI System Architecture Specification
 tags: satquery, architecture, pipeline, system, workflow, execution, design
 
 SatQuery AI is an interactive vision-language system engineered for multimodal Earth Observation analysis, operating under an architectural invariant:
